@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>하네스 BOM 산출 — 품번 교차 검증·종속 자재 산출</title>
+  <meta name="description" content="부품 매핑 마스터와 Application Spec 엑셀을 열 매핑으로 불러오고, 도면에서 읽은 커넥터·전선 규격으로 품번을 교차 검증해 터미널·실까지 산출한 뒤 BOM 엑셀로 내보내는 브라우저 도구(1단계)">
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">본문으로 건너뛰기</a>
+  <header class="site-header">
+    <div class="inner header-inner">
+      <a class="brand" href="#/masters">
+        <span class="brand-name">하네스 BOM 산출</span>
+        <span class="brand-sub">품번 교차 검증 · 터미널·실 산출 · BOM 엑셀</span>
+      </a>
+      <nav class="nav" id="nav" aria-label="주 메뉴">
+        <a href="#/masters" data-route="masters"><span class="step">1</span>마스터 데이터</a>
+        <a href="#/parts" data-route="parts"><span class="step">2</span>부품 LIST</a>
+        <a href="#/check" data-route="check"><span class="step">3</span>검증·산출</a>
+        <a href="#/bom" data-route="bom"><span class="step">4</span>BOM</a>
+        <a href="#/settings" data-route="settings">설정</a>
+      </nav>
+    </div>
+  </header>
+
+  <div id="sampleBanner" class="sample-banner" hidden>예시 데이터 — 가상의 품번·자재 코드로 시연 중입니다. 실제 자료가 아닙니다.</div>
+  <div id="storageBanner" class="warn-banner" hidden>이 브라우저에 저장할 수 없어 창을 닫으면 입력이 사라집니다. 결과는 BOM 엑셀로 내보내 보관하세요.</div>
+
+  <main id="main" class="inner main" tabindex="-1"></main>
+
+  <footer class="site-footer">
+    <div class="inner">1단계 도구 · 파일은 이 브라우저 안에서만 읽고 계산하며 외부로 보내지 않습니다</div>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="dialog" class="dialog">
+    <form method="dialog" class="dialog-body">
+      <h2 id="dialogTitle"></h2>
+      <div id="dialogContent"></div>
+      <div class="dialog-actions" id="dialogActions"></div>
+    </form>
+  </dialog>
+
+  <!-- 로컬 파일(file://)로 열어도 돌도록 module 이 아닌 일반 스크립트로 불러옵니다 -->
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="js/logic.js"></script>
+  <script src="js/sample-data.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
