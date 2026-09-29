@@ -32,8 +32,10 @@
 | `app_settings` | 산출 설정(여유율, 경계값 처리, 방수전, 단위, 구분 기호, 품번 정규화) | `settings` |
 | `bom_export_log` | BOM 내보내기 기록(도면번호, 줄 수, 남은 확인 대상 수와 사유별 건수) | 없음(새로 추가, 3단계용) |
 | `drawing_file` | 도면 자재 판별에 올린 도면 한 건(파일 이름, PDF/이미지, 좌표 단위 pt/px, 쪽 크기, 도면번호, 고객사). 원본 파일은 넣지 않음 | `drawing` (2026-09-29 v0.2 추가) |
-| `drawing_mark` | 도면 위 자재 표시 한 개(쪽, 좌표 x·y·w·h, 도면 표기 품번, 자재 종류, 추출 방식 pdf/manual) | `drawing.marks[]` |
+| `drawing_mark` | 도면 위 자재 표시 한 개(쪽, 좌표 x·y·w·h, 도면 표기 품번, 자재 종류, 추출 방식 pdf/manual/table, v0.3: 품번 종류·같은 행 고객사 품번·수량·품명) | `drawing.marks[]` |
 | `drawing_choice` | 품번별 담당자 처리(후보 선택·사내 코드 직접 입력·신규 확정). 사용자·품번당 한 행 | `drawChoices` |
+| `sub_row` | (v0.3) 커넥터 부자재 마스터 한 행(커넥터 품번 → 부자재 구분·품번·사내 코드·1개당 수량). `master_file.kind='sub'` 에만 붙음 | `masters.sub.rows[]` |
+| `customer_profile` | (v0.3) 고객사별 학습 규칙(도면 방식·표제란 알아보기 글자·예시·품번 모양·대조표·부품표 열·제외 목록). 사용자·규칙 id 당 한 행 | `profiles[]` |
 
 `app_settings` 에는 품번 후보 규칙(`draw` jsonb — 최소 글자 수, 영문+숫자, 전선 규격 거르기, 제외 목록, 비슷한 품번 기준)이 칼럼으로 붙었습니다(`drawSettings`). 재실행해도 안전합니다(`add column if not exists`).
 

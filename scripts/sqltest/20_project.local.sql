@@ -50,15 +50,19 @@ do $t$ begin
   perform public._assert_eq(
     (select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid
       join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public'),
-    50, '두 번 적용해도 정책이 50개 그대로다');
+    58, '두 번 적용해도 정책이 58개 그대로다(v0.3: sub_row·customer_profile 각 4개 추가)');
   perform public._assert_eq(
     (select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid
       join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and not t.tgisinternal),
-    12, '두 번 적용해도 updated_at 트리거가 12개 그대로다');
+    14, '두 번 적용해도 updated_at 트리거가 14개 그대로다');
   perform public._assert_eq(
     (select count(*)::int from pg_constraint where conname = 'app_settings_draw_object'),
     1, '두 번 적용해도 app_settings.draw CHECK 가 하나다');
+  perform public._assert_eq(
+    (select count(*)::int from pg_constraint where conrelid = 'public.master_file'::regclass and contype = 'c'
+       and pg_get_constraintdef(oid) like '%kind%'),
+    1, '두 번 적용해도 master_file 의 kind CHECK 가 하나다');
   perform public._assert_eq(
     (select column_default from information_schema.columns
       where table_name = 'app_settings' and column_name = 'multi_sep'),
@@ -202,6 +206,45 @@ begin
     '23514', 'app_settings.draw 는 객체만');
 end $t$;
 
+do $t$ begin raise notice '[프로젝트] v0.3 — 커넥터 부자재(sub_row) · 고객사 규칙(customer_profile) · 부품표 표시'; end $t$;
+do $t$
+declare v_sub bigint;
+begin
+  insert into public.master_file (kind, file_name) values ('sub', '예시데이터_커넥터부자재마스터.xlsx') returning id into v_sub;
+  perform set_config('test.a_sub', v_sub::text, false);
+  insert into public.sub_row (master_file_id, row_no, conn, sub_kind, pn, code, qty) values
+    (v_sub, 3, 'MX-2P-001', '터미널', 'TM-050-A', 'RM-T0001', '2');
+  insert into public.column_mapping (kind, col_names) values ('sub', '{"conn":"커넥터 품번"}');
+  insert into public.customer_profile (profile_key, name, layout, keywords, patterns, xref, table_roles) values
+    ('sample-b', '예시고객사B', 'table', array['CUSTOMER: SAMPLE-B'],
+     '[{"re":"^[A-Z]{2}-[0-9]{4}$","type":"cust","auto":true}]', '[{"cust":"CB-2210","mfr":"MX-2P-001"}]', '{"MAKERP/N":"mfr"}');
+  insert into public.customer_profile (profile_key, name) values ('sample-b', '예시고객사B 고침')
+    on conflict (owner_id, profile_key) do update set name = excluded.name;
+  perform public._assert_eq((select name from public.customer_profile where profile_key = 'sample-b'), '예시고객사B 고침',
+    'onConflict (owner_id, profile_key) upsert 가 갱신으로 동작한다');
+  insert into public.drawing_mark (drawing_id, mark_key, x, y, w, h, pn, src, pn_type, cust_pn, qty) values
+    (current_setting('test.a_dr')::bigint, 't1', 552, 72, 38, 7.5, 'MX-8P-040', 'table', 'mfr', 'CB-2208', '1');
+
+  perform public._assert_raises(format(
+    $q$insert into public.sub_row (master_file_id, row_no, conn) values (%s, 4, 'MX-2P-001')$q$, v_sub),
+    '23514', '부자재 행에는 부자재 품번이나 사내 코드가 있어야 한다');
+  perform public._assert_raises(format(
+    $q$insert into public.sub_row (master_file_id, row_no, conn, pn) values (%s, 5, 'MX-2P-001', 'X')$q$, current_setting('test.a_map')),
+    '42501', '부자재 행은 kind=sub 마스터에만 붙는다');
+  perform public._assert_raises(
+    $q$insert into public.master_file (kind, file_name) values ('etc', 'x.xlsx')$q$,
+    '23514', '마스터 종류는 map·spec·sub 만');
+  perform public._assert_raises(
+    $q$insert into public.customer_profile (profile_key, name, layout) values ('p9', 'X', 'grid')$q$,
+    '23514', '도면 방식은 label·table 만');
+  perform public._assert_raises(
+    $q$insert into public.customer_profile (profile_key, name, xref) values ('p9', 'X', '{}')$q$,
+    '23514', '대조표는 배열만');
+  perform public._assert_raises(format(
+    $q$insert into public.drawing_mark (drawing_id, mark_key, x, y, w, h, src, pn_type) values (%s, 't9', 0, 0, 1, 1, 'table', 'maker')$q$, current_setting('test.a_dr')),
+    '23514', '품번 종류는 빈 값·mfr·cust 만');
+end $t$;
+
 do $t$ begin raise notice '[프로젝트] 기록성 표(bom_export_log)'; end $t$;
 do $t$ begin
   perform public._assert_rows(
@@ -227,7 +270,7 @@ declare
 begin
   foreach t in array array['master_file', 'map_row', 'spec_row', 'column_mapping', 'harness_bom',
                            'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings', 'bom_export_log',
-                           'drawing_file', 'drawing_mark', 'drawing_choice']
+                           'drawing_file', 'drawing_mark', 'drawing_choice', 'sub_row', 'customer_profile']
   loop
     perform public._assert_rows(format('select 1 from public.%I', t), 0, 'B 에게 A 의 ' || t || ' 가 안 보인다');
   end loop;
@@ -259,6 +302,12 @@ begin
     '42501', 'B 는 A 의 도면에 자재 표시를 끼워 넣을 수 없다');
   perform public._assert_rows('update public.drawing_mark set pn = $$탈취$$ where drawing_id = ' || current_setting('test.a_dr'),
     0, 'B 는 A 의 drawing_mark 를 고칠 수 없다(0행)');
+  perform public._assert_raises(format(
+    $q$insert into public.sub_row (master_file_id, row_no, conn, pn) values (%s, 9, 'MX-9', 'X')$q$, current_setting('test.a_sub')),
+    '42501', 'B 는 A 의 부자재 마스터에 행을 끼워 넣을 수 없다');
+  perform public._assert_rows('update public.customer_profile set name = $$탈취$$', 0, 'B 는 A 의 고객사 규칙을 고칠 수 없다(0행)');
+  -- B 도 같은 규칙 id 로 자기 규칙을 둘 수 있다(UNIQUE 는 사용자별)
+  insert into public.customer_profile (profile_key, name) values ('sample-b', 'B 의 규칙');
   -- B 도 같은 품번 열쇠로 자기 처리를 둘 수 있다(UNIQUE 는 사용자별)
   insert into public.drawing_choice (pn_key, choice) values ('CA1004', '{"code":"RM-B"}');
   perform public._assert_raises(format(
@@ -281,7 +330,7 @@ declare t text;
 begin
   foreach t in array array['master_file', 'map_row', 'spec_row', 'column_mapping', 'harness_bom',
                            'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings', 'bom_export_log',
-                           'drawing_file', 'drawing_mark', 'drawing_choice']
+                           'drawing_file', 'drawing_mark', 'drawing_choice', 'sub_row', 'customer_profile']
   loop
     perform public._assert_rows(format('select 1 from public.%I', t), 0, 'anon 에게 ' || t || ' 가 안 보인다');
   end loop;
@@ -327,6 +376,7 @@ end $t$;
 -- 정리
 delete from public.bom_export_log;
 delete from public.drawing_choice;
+delete from public.customer_profile;
 delete from public.drawing_file;
 delete from public.app_settings;
 delete from public.column_mapping;

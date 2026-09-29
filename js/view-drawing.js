@@ -5,11 +5,14 @@
  */
 (function (root) {
   'use strict';
-  var DL = root.DrawLogic, DS = root.DrawSample;
+  var DL = root.DrawLogic, DS = root.DrawSample, LR = root.DrawLearn;
   var ui = {
     doc: null, img: null, docFor: '',   // 불러온 도면(pdf.js 문서 또는 이미지)과 그 파일 이름
     page: 1, zoom: 1, fit: true, mode: 'select', sel: null, filter: 'all',
-    cache: {}, scroll: { x: 0, y: 0 }, pendingScroll: null, loading: '', queueText: ''
+    cache: {}, scroll: { x: 0, y: 0 }, pendingScroll: null, loading: '', queueText: '',
+    items: null,       // PDF 글자 조각(메모리에만) — 규칙 가르치기·표 읽기·고객사 알아보기에 씀
+    tableDraft: null,  // 표 영역을 새로 지정해 읽은 표(열 역할 확정 전)
+    profileOpen: false
   };
   var ctx = null;
 
@@ -78,17 +81,46 @@
   function D() { return S().drawing; }
   function mapRows() { var m = S().masters.map; return m ? m.rows : []; }
   function newId() { var d = D(); d.nextId = (d.nextId || 1) + 1; return 'm' + (d.nextId - 1); }
+  function profiles() { return S().profiles || (S().profiles = []); }
+  function activeProfile() { var id = D().profileId; return id ? profiles().filter(function (p) { return p.id === id; })[0] || null : null; }
+  function subRows() { var m = S().masters.sub; return m ? m.rows : []; }
   function classify() {
     var st = S();
-    return DL.classifyMarks({ marks: D().marks, mapRows: mapRows(), customer: D().info.customer, norm: st.settings.norm, settings: st.drawSettings, choices: st.drawChoices });
+    return DL.classifyMarks({ marks: D().marks, mapRows: mapRows(), customer: D().info.customer, norm: st.settings.norm, settings: st.drawSettings, choices: st.drawChoices, profile: activeProfile() });
   }
   function resetView(mode) { ui.page = 1; ui.fit = true; ui.sel = null; ui.cache = {}; ui.scroll = { x: 0, y: 0 }; ui.mode = mode || 'select'; }
+  // PDF 글자에서 표시 뽑기. 고객사 규칙이 「부품표형」이면 도면 표에서, 아니면 도면 글자(라벨)에서 뽑습니다.
+  // 결과: 뽑은 개수(표를 못 찾으면 -1)
   function extractInto(items, keepManual) {
-    var st = S(), d = D();
-    var cands = DL.extractCandidates(items, { settings: st.drawSettings, index: DL.buildMasterIndex(mapRows(), st.settings.norm), norm: st.settings.norm });
-    var manual = keepManual ? d.marks.filter(function (m) { return m.src !== 'pdf'; }) : [];
-    d.marks = manual.concat(cands.map(function (c) { return { id: newId(), page: c.page, x: c.x, y: c.y, w: c.w, h: c.h, pn: c.pn, src: 'pdf', kind: '' }; }));
+    var st = S(), d = D(), prof = activeProfile();
+    var manual = keepManual ? d.marks.filter(function (m) { return m.src === 'manual'; }) : [];
+    var cands;
+    if (prof && prof.layout === 'table') {
+      var t = findTable(items, prof);
+      if (!t) { d.marks = manual; d.table = null; return -1; }
+      var roles = LR.guessRoles(t.header.map(function (x) { return x.text; }), prof.table.roles);
+      d.table = { page: t.page, region: t.region, header: t.header.map(function (x) { return x.text; }), roles: roles, auto: !d.table || !d.table.fixed, fixed: !!(d.table && d.table.fixed) };
+      cands = LR.tableMarks(t, roles);
+    } else {
+      d.table = null;
+      cands = DL.extractCandidates(items, { settings: st.drawSettings, index: DL.buildMasterIndex(mapRows(), st.settings.norm), norm: st.settings.norm, profile: prof });
+    }
+    d.marks = manual.concat(cands.map(function (c) {
+      return { id: newId(), page: c.page, x: c.x, y: c.y, w: c.w, h: c.h, pn: c.pn, src: c.src || 'pdf', kind: '', pnType: c.pnType || '', custPn: c.custPn || '', qty: c.qty || '', desc: c.desc || '' };
+    }));
     return cands.length;
+  }
+  // 도면 표 찾기 — 지정한 영역이 있으면 그 영역, 없으면 쪽마다 머리글(고객사 규칙에 저장된 머리글 우선)을 찾아봄
+  function findTable(items, prof) {
+    var d = D(), hints = LR.headerHints(prof), saved = prof ? prof.table.roles : null;
+    if (d.table && d.table.fixed && d.table.region) return LR.parseTable(items, { page: d.table.page, region: d.table.region, headerHints: hints, saved: saved });
+    for (var p = 1; p <= (d.pages.length || 1); p++) {
+      var t = LR.parseTable(items, { page: p, headerHints: hints, saved: saved });
+      if (!t || !t.rows.length) continue;
+      var roles = LR.guessRoles(t.header.map(function (x) { return x.text; }), saved);
+      if (roles.some(function (r) { return r === 'cust' || r === 'mfr' || r === 'pn'; })) return t;
+    }
+    return null;
   }
 
   // ── 도면 불러오기 ─────────────────────────────────────────────
@@ -98,13 +130,22 @@
     var docRef;
     return openPdfData(bytes).then(function (doc) { docRef = doc; return pdfPagesAndItems(doc); }).then(function (r) {
       var d = D(), same = d.fileName === fileName && d.type === 'pdf' && d.marks.length;
-      ui.doc = docRef; ui.img = null; ui.docFor = fileName; ui.loading = '';
+      ui.doc = docRef; ui.img = null; ui.docFor = fileName; ui.loading = ''; ui.items = r.items; ui.tableDraft = null;
       if (opts.keep && same) { ui.cache = {}; ctx.render(); return; }
-      d.fileName = fileName; d.type = 'pdf'; d.unit = 'pt'; d.pages = r.pages; d.queue = [];
+      d.fileName = fileName; d.type = 'pdf'; d.unit = 'pt'; d.pages = r.pages; d.queue = []; d.table = null;
+      // 표제란 글자로 어느 고객사 도면인지 알아보고 그 고객사 규칙을 저절로 적용
+      var det = LR.detectProfile(r.items.map(function (it) { return it.str; }), profiles()), msg = '';
+      if (det) {
+        d.profileId = det.profile.id; d.profileAuto = true; d.info.customer = det.profile.name;
+        msg = '「' + det.profile.name + '」 규칙을 적용했습니다(표제란 글자로 알아봄' + (det.tie ? ' — 다른 규칙과 같은 수로 맞아 확인이 필요합니다' : '') + '). ';
+      } else if (d.profileAuto) { d.profileId = ''; d.profileAuto = false; }
       var n = extractInto(r.items, false);
-      resetView(n ? 'select' : 'mark');
+      resetView(n > 0 ? 'select' : n < 0 ? 'table' : 'mark');
       ctx.save(); ctx.render();
-      if (!opts.quiet) ctx.toast(n ? 'PDF 글자에서 품번 후보 ' + n + '개를 찾아 도면 위에 표시했습니다.' : '이 PDF 에서 글자를 찾지 못했습니다. 스캔본이면 「위치 표시」로 도면 위를 눌러 표시해 주세요.', !n);
+      if (opts.quiet) return;
+      if (n < 0) ctx.toast(msg + '도면에서 부품표를 찾지 못했습니다. 「표 영역 지정」으로 표를 끌어 감싸 주세요.', true);
+      else if (n) ctx.toast(msg + (d.table ? '도면 부품표에서 품번 ' + n + '개를 읽어 표시했습니다.' : 'PDF 글자에서 품번 후보 ' + n + '개를 찾아 도면 위에 표시했습니다.'));
+      else ctx.toast(msg + '이 PDF 에서 글자를 찾지 못했습니다. 스캔본이면 「위치 표시」로 도면 위를 눌러 표시해 주세요.', true);
     }).catch(function (e) { ui.loading = ''; ctx.render(); ctx.toast('PDF 를 열지 못했습니다: ' + e.message, true); });
   }
   function loadImage(dataUrl, fileName, opts) {
@@ -116,10 +157,11 @@
       img.src = dataUrl;
     }).then(function (img) {
       var d = D(), same = d.fileName === fileName && d.type === 'image';
-      ui.img = img; ui.doc = null; ui.docFor = fileName; ui.loading = '';
+      ui.img = img; ui.doc = null; ui.docFor = fileName; ui.loading = ''; ui.items = null; ui.tableDraft = null;
       if (opts.keep && same) { ui.cache = {}; ctx.render(); return; }
       d.fileName = fileName; d.type = 'image'; d.unit = 'px'; d.pages = [{ w: img.naturalWidth, h: img.naturalHeight }];
-      d.marks = []; d.queue = opts.queue || [];
+      d.marks = []; d.queue = opts.queue || []; d.table = null;
+      if (d.profileAuto) { d.profileId = ''; d.profileAuto = false; }   // 이미지는 글자가 없어 고객사를 알아볼 수 없음 — 규칙은 직접 고름
       resetView('mark');
       ctx.save(); ctx.render();
       if (!opts.quiet) ctx.toast('이미지 도면을 불러왔습니다. 「위치 표시」 상태에서 자재 위치를 누르거나 끌어 표시해 주세요.');
@@ -152,23 +194,42 @@
     Object.keys(mp).forEach(function (k) { names[k] = String(aoa[hr][mp[k]]); });
     return { fileName: '예시데이터_통합자재마스터.xlsx', sheet: '통합자재마스터', headerRow: hr, names: names, rows: t.rows, skipped: t.skipped, noRange: 0, badRange: [], at: ctx.today() };
   }
-  function askSample(asScan) {
+  function sampleSub() {
+    var L = ctx.L, aoa = DS.subAoa, hr = L.detectHeaderRow(aoa, LR.SUB_FIELDS), mp = L.guessMapping(aoa[hr], LR.SUB_FIELDS);
+    var t = LR.buildSubTable(aoa, hr, mp), names = {};
+    Object.keys(mp).forEach(function (k) { names[k] = String(aoa[hr][mp[k]]); });
+    return { fileName: '예시데이터_커넥터부자재마스터.xlsx', sheet: '커넥터부자재', headerRow: hr, names: names, rows: t.rows, skipped: t.skipped, noRange: 0, badRange: [], at: ctx.today() };
+  }
+  // 예시 고객사 규칙 2개(A 라벨형 · B 부품표형)를 넣음 — 같은 id 는 예시 값으로 바꾸고 담당자가 만든 규칙은 그대로
+  function putSampleProfiles() {
+    var list = profiles();
+    DS.profiles.forEach(function (sp) {
+      var p = LR.normalizeProfile(JSON.parse(JSON.stringify(sp))); p.sample = true;
+      var i = list.map(function (x) { return x.id; }).indexOf(p.id);
+      if (i >= 0) list[i] = p; else list.push(p);
+    });
+  }
+  // kind: 'pdf'(라벨형 A) · 'scan'(A 를 스캔 이미지로) · 'table'(부품표형 B)
+  function askSample(kind) {
     var st = S();
     var hasReal = (st.masters.map && !st.sample.map) || (D().fileName && !D().sample);
     (hasReal ? ctx.confirmBox('예시 도면 불러오기', '지금 불러온 부품 매핑 마스터와 도면 표시를 예시 데이터로 바꿉니다. 계속할까요?', '바꾸기') : Promise.resolve(true))
-      .then(function (ok) { if (ok) loadSample(asScan, false); });
+      .then(function (ok) { if (ok) loadSample(kind, false); });
   }
   // quiet: 새로고침 뒤 예시 도면 그림만 다시 불러옴(저장된 표시·처리·마스터는 그대로)
-  function loadSample(asScan, quiet) {
-    var st = S(), d = D();
+  function loadSample(kind, quiet) {
+    if (kind === true) kind = 'scan'; else if (kind === false) kind = 'pdf';
+    var st = S(), d = D(), isB = kind === 'table';
     if (!quiet) {
       st.masters.map = sampleMaster(); st.sample.map = true;
+      if (!st.masters.sub || st.sample.sub) { st.masters.sub = sampleSub(); st.sample.sub = true; }
+      putSampleProfiles();
       st.drawChoices = {};
-      d.info = { drawingNo: DS.drawingNo, customer: DS.customer };
+      d.info = isB ? { drawingNo: DS.drawingNoB, customer: DS.customerB } : { drawingNo: DS.drawingNo, customer: DS.customer };
     }
-    d.sample = asScan ? 'scan' : 'pdf';
-    var bytes = b64ToBytes(root.DrawSamplePdf);
-    if (!asScan) return loadPdf(bytes, '예시도면_하네스_가상.pdf', { quiet: quiet, keep: quiet });
+    d.sample = kind;
+    var bytes = b64ToBytes(isB ? root.DrawSamplePdfB : root.DrawSamplePdf);
+    if (kind !== 'scan') return loadPdf(bytes, isB ? '예시도면_부품표형_가상.pdf' : '예시도면_하네스_가상.pdf', { quiet: quiet, keep: quiet });
     // 스캔본 가정: 같은 PDF 를 그림으로 바꿔 글자 레이어 없이 불러오고, 읽어 둔 품번 목록을 배치 대기열에 넣습니다
     ui.loading = '예시 도면을 스캔 이미지로 바꾸는 중입니다…'; ctx.render();
     return openPdfData(bytes).then(function (doc) { return doc.getPage(1); }).then(function (page) {
@@ -179,7 +240,11 @@
     }).then(function (url) {
       return loadImage(url, '예시도면_스캔_가상.png', { queue: quiet ? D().queue : DS.scanList.slice(), keep: quiet, quiet: quiet });
     }).then(function () {
-      D().sample = 'scan'; ctx.save(); ctx.render();
+      var dd = D();
+      dd.sample = 'scan';
+      // 스캔본은 표제란 글자를 읽을 수 없어 고객사 규칙을 직접 고른 것으로 둡니다
+      if (!quiet) { dd.profileId = 'sample-a'; dd.profileAuto = false; }
+      ctx.save(); ctx.render();
       if (!quiet) ctx.toast('스캔 이미지 예시입니다. 배치 대기열의 품번을 도면 위 해당 위치를 눌러 차례로 표시해 보세요.');
     }).catch(function (e) { ui.loading = ''; ctx.render(); ctx.toast(e.message, true); });
   }
@@ -245,13 +310,24 @@
     else { box.scrollLeft = ui.scroll.x; box.scrollTop = ui.scroll.y; }
   }
   var lastRows = [];
+  function tagLabel(r) { return r.no + ' ' + (r.status === 'customer' && !r.code ? '고객사·매핑 없음' : DL.STATUS[r.status].label); }
   function drawMarks(stage, z) {
     var layer = stage.querySelector('.dv-marks');
     layer.innerHTML = '';
+    var d = D();
+    // 도면 표 영역(부품표형)
+    if (d.table && d.table.region && d.table.page === ui.page && isFinite(d.table.region.w)) {
+      var rg = d.table.region, tb = document.createElement('div');
+      tb.className = 'tbl-region';
+      tb.style.left = rg.x * z - 4 + 'px'; tb.style.top = rg.y * z - 4 + 'px'; tb.style.width = rg.w * z + 8 + 'px'; tb.style.height = rg.h * z + 8 + 'px';
+      tb.appendChild(h0('span', 'tbl-tag', '도면 부품표'));
+      layer.appendChild(tb);
+    }
+    if (ui.mode === 'learn') { drawTokens(layer, z); return; }
     lastRows.forEach(function (r) {
       if (r.page !== ui.page) return;
       var el = document.createElement('div');
-      el.className = 'mk st-' + r.status + (r.id === ui.sel ? ' sel' : '') + (ui.filter !== 'all' && ui.filter !== r.status ? ' dim' : '');
+      el.className = 'mk st-' + r.status + (r.status === 'customer' && !r.code ? ' unmapped' : '') + (r.id === ui.sel ? ' sel' : '') + (ui.filter !== 'all' && ui.filter !== r.status ? ' dim' : '');
       el.setAttribute('data-id', r.id);
       el.setAttribute('role', 'button');
       el.setAttribute('tabindex', ui.mode === 'select' ? '0' : '-1');
@@ -261,12 +337,117 @@
       el.style.left = (r.x * z - pad) + 'px'; el.style.top = (r.y * z - pad) + 'px';
       el.style.width = (r.w * z + pad * 2) + 'px'; el.style.height = (r.h * z + pad * 2) + 'px';
       var tag = document.createElement('span');
-      tag.className = 'mk-tag'; tag.textContent = r.no + ' ' + DL.STATUS[r.status].label;
+      tag.className = 'mk-tag'; tag.textContent = tagLabel(r);
       el.appendChild(tag);
       el.addEventListener('click', function (e) { if (ui.mode !== 'select') return; e.stopPropagation(); selectFromDrawing(r.id); });
       el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectFromDrawing(r.id); } });
       layer.appendChild(el);
     });
+  }
+  function h0(tag, cls, text) { var e = document.createElement(tag); e.className = cls; e.textContent = text; return e; }
+  // ── 규칙 가르치기(도면 글자 누르기) ──────────────────────────
+  var tokCache = { key: '', list: [] };
+  function pdfTokens() {
+    if (!ui.items) return [];
+    if (tokCache.key !== ui.docFor) {
+      var list = [];
+      DL.mergeTextItems(ui.items).forEach(function (seg) { DL.tokenize(seg).forEach(function (t) { if (/[A-Z0-9]/i.test(t.str)) list.push(t); }); });
+      tokCache = { key: ui.docFor, list: list };
+    }
+    return tokCache.list;
+  }
+  function tokenRole(t, prof) {
+    if (!prof) return '';
+    var k = LR.keyText(t.str);
+    if (prof.keywords.some(function (x) { var kk = LR.keyText(x); return kk.indexOf(k) >= 0 && k.length >= 3; })) return 'keyword';
+    if (DL.isExcluded(t.str, DL.excludeList(prof.exclude))) return 'notpn';
+    return DL.patternType(t.str, DL.compileProfile(prof, S().settings.norm));
+  }
+  function drawTokens(layer, z) {
+    var prof = activeProfile();
+    pdfTokens().forEach(function (t) {
+      if (t.page !== ui.page) return;
+      var role = tokenRole(t, prof);
+      var el = h0('button', 'tk' + (role ? ' tk-' + role : ''), '');
+      el.type = 'button';
+      el.title = t.str + (role ? ' — ' + LR.ROLE_TEXT[role === 'mfr' || role === 'cust' ? role : role] : '');
+      el.setAttribute('aria-label', t.str + ' 가르치기');
+      el.style.left = (t.x * z - 1) + 'px'; el.style.top = (t.y * z - 1) + 'px';
+      el.style.width = (t.w * z + 2) + 'px'; el.style.height = (t.h * z + 2) + 'px';
+      el.addEventListener('click', function (e) { e.stopPropagation(); teach(t.str); });
+      layer.appendChild(el);
+    });
+  }
+  // 누른 글자를 고객사 규칙에 가르침 — 규칙이 없으면 먼저 만듦
+  function ensureProfile() {
+    var p = activeProfile();
+    if (p) return Promise.resolve(p);
+    var h = ctx.h, name = h('input', { type: 'text', value: D().info.customer || '', 'aria-label': '고객사 이름' });
+    return ctx.openDialog('고객사 규칙 만들기', h('div', null,
+      h('p', { class: 'small', text: '이 도면에 쓸 고객사 규칙이 아직 없습니다. 고객사 이름을 적으면 규칙을 새로 만들고, 앞으로 누르는 글자를 이 규칙에 쌓습니다. 이름은 마스터의 고객사 열과 같게 적어 주세요.' }),
+      h('label', { class: 'field' }, '고객사 이름', name)), [{ label: '취소', value: 'cancel' }, { label: '만들기', value: 'ok', primary: true }])
+      .then(function (v) {
+        if (v !== 'ok' || !name.value.trim()) return null;
+        var np = LR.newProfile(name.value.trim()); np.at = ctx.today();
+        if (D().type === 'pdf' && D().table) np.layout = 'table';
+        profiles().push(np);
+        var d = D(); d.profileId = np.id; d.profileAuto = false; d.info.customer = np.name;
+        ctx.save();
+        return np;
+      });
+  }
+  function teach(text) {
+    ensureProfile().then(function (p) {
+      if (!p) return;
+      var h = ctx.h, cur = tokenRole({ str: text }, p);
+      ctx.openDialog('「' + text + '」 가르치기 — ' + p.name, h('div', null,
+        h('p', { class: 'small', text: '이 글자가 무엇인지 알려 주시면 같은 모양의 글자를 이 고객사 도면에서 같게 봅니다. 품번은 모양(영문·숫자·기호 순서)으로 규칙을 만듭니다.' }),
+        cur ? h('p', { class: 'small' }, '지금: ', h('b', { text: LR.ROLE_TEXT[cur] })) : null),
+        [{ label: '취소', value: 'cancel' }, { label: '품번 아님', value: 'notpn' }, { label: '고객사 알아보기 글자', value: 'keyword' },
+          { label: '고객사 품번 예', value: 'cust' }, { label: '제조사 품번 예', value: 'mfr', primary: true }])
+        .then(function (role) {
+          if (!LR.ROLE_TEXT[role]) return;
+          LR.learnExample(p, text, role); p.at = ctx.today();
+          if (role === 'keyword') { D().profileAuto = true; }
+          relearn('「' + text + '」 을(를) ' + LR.ROLE_TEXT[role] + '(으)로 가르쳤습니다.' + conflictNote(p));
+        });
+    });
+  }
+  // 규칙이 바뀌면 PDF 글자에서 다시 뽑음(직접 표시한 것은 그대로)
+  function relearn(msg) {
+    var d = D();
+    if (d.type === 'pdf' && ui.items) {
+      var n = extractInto(ui.items, true);
+      ctx.save(); saveScroll(); ctx.render();
+      ctx.toast(msg + (n >= 0 ? ' 다시 뽑은 표시 ' + n + '개.' : ' 부품표를 찾지 못했습니다 — 「표 영역 지정」으로 표를 감싸 주세요.'), n < 0);
+    } else { ctx.save(); saveScroll(); ctx.render(); if (msg) ctx.toast(msg); }
+  }
+  function conflictNote(p) {
+    return LR.patternConflicts(p).length ? ' 다만 제조사 품번과 고객사 품번의 모양이 같아 모양만으로는 구분할 수 없습니다(그 모양은 마스터·대조표로 정합니다).' : '';
+  }
+  // ── 도면 표 영역 지정 → 열 연결 ─────────────────────────────
+  function tableFromRegion(box) {
+    if (!ui.items) { ctx.toast('글자가 있는 PDF 에서만 표를 읽을 수 있습니다.', true); return; }
+    var prof = activeProfile();
+    var t = LR.parseTable(ui.items, { page: ui.page, region: box, headerHints: LR.headerHints(prof), saved: prof ? prof.table.roles : null });
+    if (!t || !t.rows.length) { ctx.toast('그 영역에서 머리글과 행을 찾지 못했습니다. 머리글 줄까지 넉넉히 감싸 주세요.', true); return; }
+    ui.tableDraft = { table: t, roles: LR.guessRoles(t.header.map(function (x) { return x.text; }), prof ? prof.table.roles : null) };
+    ui.mode = 'select'; saveScroll(); ctx.render();
+    var card = document.getElementById('dv-tablecard'); if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function applyTableDraft(saveToProfile) {
+    var dr = ui.tableDraft, d = D(), prof = activeProfile();
+    if (!dr) return;
+    if (!dr.roles.some(function (r) { return r === 'cust' || r === 'mfr' || r === 'pn'; })) { ctx.toast('품번 열(고객사 품번·제조사 품번·품번 중 하나)을 하나 이상 골라 주세요.', true); return; }
+    var marks = LR.tableMarks(dr.table, dr.roles);
+    d.marks = d.marks.filter(function (m) { return m.src !== 'table' && m.src !== 'pdf'; }).concat(marks.map(function (c) {
+      return { id: newId(), page: c.page, x: c.x, y: c.y, w: c.w, h: c.h, pn: c.pn, src: 'table', kind: '', pnType: c.pnType, custPn: c.custPn, qty: c.qty, desc: c.desc };
+    }));
+    d.table = { page: dr.table.page, region: dr.table.region, header: dr.table.header.map(function (x) { return x.text; }), roles: dr.roles.slice(), fixed: true };
+    if (saveToProfile && prof) { LR.saveRoles(prof, dr.table.header, dr.roles); prof.layout = 'table'; prof.at = ctx.today(); }
+    ui.tableDraft = null; ui.sel = null;
+    ctx.save(); saveScroll(); ctx.render();
+    ctx.toast('도면 부품표에서 품번 ' + marks.length + '개를 뽑았습니다' + (saveToProfile && prof ? '. 열 연결을 「' + prof.name + '」 규칙에 저장했습니다.' : '.'));
   }
   function applySel() {
     document.querySelectorAll('.mk.sel, tr.dv-row.sel').forEach(function (el) { el.classList.remove('sel'); });
@@ -318,7 +499,7 @@
       return { x: (e.clientX - r.left) / ui.zoom, y: (e.clientY - r.top) / ui.zoom, px: e.clientX, py: e.clientY };
     }
     stage.addEventListener('pointerdown', function (e) {
-      if (ui.mode !== 'mark' || e.button > 0) return;
+      if ((ui.mode !== 'mark' && ui.mode !== 'table') || e.button > 0) return;
       e.preventDefault();
       start = pt(e);
       try { stage.setPointerCapture(e.pointerId); } catch (x) { /* 무시 */ }
@@ -338,6 +519,11 @@
       temp = null;
       if (e.type === 'pointercancel') return;
       var pg = D().pages[ui.page - 1], box;
+      if (ui.mode === 'table') {
+        if (Math.abs(p.px - s.px) < 12 || Math.abs(p.py - s.py) < 12) { ctx.toast('표 전체(머리글 줄 포함)를 끌어서 감싸 주세요.', true); return; }
+        tableFromRegion({ x: Math.max(0, Math.min(s.x, p.x)), y: Math.max(0, Math.min(s.y, p.y)), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) });
+        return;
+      }
       if (Math.abs(p.px - s.px) < 6 && Math.abs(p.py - s.py) < 6) box = DL.defaultBox(pg.w, pg.h, s.x, s.y);
       else box = { x: Math.max(0, Math.min(s.x, p.x)), y: Math.max(0, Math.min(s.y, p.y)), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) };
       addMark(box);
@@ -370,12 +556,18 @@
   function manualCode(r) {
     var h = ctx.h;
     var code = h('input', { type: 'text', 'aria-label': '사내 자재 코드' }), mfr = h('input', { type: 'text', value: r.mfr || '', 'aria-label': '제조사 품번' }), name = h('input', { type: 'text', value: r.name || '', 'aria-label': '품명' });
+    var prof = activeProfile(), toXref = r.isCust && prof ? h('input', { type: 'checkbox', checked: true }) : null;
     ctx.openDialog('사내 자재 코드 직접 입력 — ' + r.pn, h('div', null,
       h('p', { class: 'small', text: '같은 품번이 도면 여러 곳에 있으면 모두 같은 코드로 바뀝니다. 마스터 엑셀에도 이 매핑을 추가해 두시면 다음 도면부터 자동으로 맞춰집니다.' }),
-      h('div', { class: 'manual' }, h('label', { class: 'field' }, '사내 자재 코드 *', code), h('label', { class: 'field' }, '제조사 품번', mfr), h('label', { class: 'field' }, '품명', name))),
+      h('div', { class: 'manual' }, h('label', { class: 'field' }, '사내 자재 코드 *', code), h('label', { class: 'field' }, '제조사 품번', mfr), h('label', { class: 'field' }, '품명', name)),
+      toXref ? h('label', { class: 'check' }, toXref, h('span', { text: '「' + prof.name + '」 고객사 대조표에도 넣기(고객사 품번 ' + r.pn + ' → 제조사 품번). 다음 도면부터 저절로 매핑됩니다' })) : null),
       [{ label: '취소', value: 'cancel' }, { label: '저장', value: 'ok', primary: true }]).then(function (v) {
       if (v !== 'ok') return;
       if (!code.value.trim()) { ctx.toast('사내 자재 코드를 입력해 주세요.', true); return; }
+      if (toXref && toXref.checked) {
+        prof.xref = LR.mergeXref(prof.xref, [{ cust: r.pn, mfr: mfr.value.trim(), code: code.value.trim(), name: name.value.trim() }], S().settings.norm);
+        prof.at = ctx.today();
+      }
       setChoice(r.key, { code: code.value.trim(), mfr: mfr.value.trim(), name: name.value.trim() });
     });
     setTimeout(function () { code.focus(); }, 30);
@@ -405,10 +597,18 @@
     else if (v === 'undo') setChoice(r.key, null);
     else if (v === 'exclude') excludePn(r);
     else if (v === 'delete') removeMark(r);
+    else if (v.indexOf('teach:') === 0) {
+      var role = v.slice(6);
+      ensureProfile().then(function (p) {
+        if (!p) return;
+        LR.learnExample(p, r.pn, role); p.at = ctx.today();
+        relearn('「' + r.pn + '」 을(를) 「' + p.name + '」 규칙의 ' + LR.ROLE_TEXT[role] + '(으)로 가르쳤습니다.' + conflictNote(p));
+      });
+    }
   }
   function actionSelect(r) {
     var h = ctx.h, opts = [h('option', { value: '', text: '처리 선택' })];
-    if (r.status === 'mapping' || (r.status === 'existing' && r.confirmed)) {
+    if (r.status === 'mapping' || r.status === 'customer' || (r.status === 'existing' && r.confirmed)) {
       (r.candidates || []).forEach(function (c) {
         opts.push(h('option', { value: 'pick:' + c.id, disabled: !c.code, text: '후보: ' + (c.code || '(사내 코드 없음)') + ' · ' + (c.mfr || '-') + (c.customer ? ' [' + c.customer + ']' : '') + (c.why ? ' (' + c.why + ')' : '') }));
       });
@@ -417,6 +617,10 @@
     if (r.pn) opts.push(h('option', { value: 'manual', text: '사내 코드 직접 입력…' }));
     if (r.confirmed) opts.push(h('option', { value: 'undo', text: '처리 되돌리기' }));
     if (r.pn) opts.push(h('option', { value: 'exclude', text: '품번 아님 — 제외 목록에 넣기' }));
+    if (r.pn) {
+      opts.push(h('option', { value: 'teach:cust', text: '고객사 규칙에 가르치기: 고객사 품번 예' }));
+      opts.push(h('option', { value: 'teach:mfr', text: '고객사 규칙에 가르치기: 제조사 품번 예' }));
+    }
     opts.push(h('option', { value: 'delete', text: '이 표시 지우기' }));
     return h('select', { class: 'dv-act', 'aria-label': r.no + '번 처리', onchange: function (e) { onAction(r, e.target.value); } }, opts);
   }
@@ -428,18 +632,23 @@
   }
   function exportInfo(res) {
     var d = D();
-    return { fileName: d.fileName, drawingNo: d.info.drawingNo, customer: d.info.customer, unit: d.unit, pages: d.pages.length, date: ctx.today(), total: res.total };
+    var p = activeProfile();
+    return { fileName: d.fileName, drawingNo: d.info.drawingNo, customer: d.info.customer, unit: d.unit, pages: d.pages.length, date: ctx.today(), total: res.total,
+      profile: p ? p.name + (d.profileAuto ? '(표제란 글자로 자동 적용)' : '(직접 고름)') + (d.table ? ' · 부품표형' : '') : '' };
   }
   function warnOpen(res) {
-    var open = res.count.mapping + res.count.empty;
-    return open ? ctx.confirmBox('확인 필요 항목이 남았습니다', '매핑 필요 ' + res.count.mapping + '개, 품번 미입력 ' + res.count.empty + '개가 남아 있습니다. 그대로 내보낼까요? (「확인 필요」 시트에 따로 모아 둡니다)', '내보내기') : Promise.resolve(true);
+    var open = res.open;
+    return open ? ctx.confirmBox('손볼 항목이 남았습니다', '확인 필요·품번 미입력·매핑 없는 고객사 품번·확정 전 신규가 ' + open + '개 남아 있습니다. 그대로 내보낼까요? (「확인 필요」 시트에 따로 모아 둡니다)', '내보내기') : Promise.resolve(true);
   }
+  function bomLines(res) { return subRows().length ? LR.expandBom(res, subRows(), { mapRows: mapRows(), norm: S().settings.norm, off: S().drawSubOff }) : null; }
   function exportXlsx() {
     var res = classify();
     if (!res.total) { ctx.toast('내보낼 표시가 없습니다.', true); return; }
     warnOpen(res).then(function (ok) {
       if (!ok) return;
       var sheets = DL.drawingSheets(res, exportInfo(res)), wb = XLSX.utils.book_new();
+      var lines = bomLines(res);
+      if (lines) sheets['부자재 포함 자재 목록'] = LR.bomSheet(lines);
       Object.keys(sheets).forEach(function (name) {
         var ws = XLSX.utils.aoa_to_sheet(sheets[name]);
         var widths = sheets[name][0].map(function (_, ci) {
@@ -450,7 +659,7 @@
         XLSX.utils.book_append_sheet(wb, ws, name);
       });
       XLSX.writeFile(wb, baseName() + '_자재판별_' + ctx.today() + '.xlsx');
-      ctx.toast('엑셀을 내보냈습니다(자재 판별 · 품번별 요약 · 확인 필요 · 도면 정보).');
+      ctx.toast('엑셀을 내보냈습니다(자재 판별 · 품번별 요약 · 확인 필요 · 도면 정보' + (lines ? ' · 부자재 포함 자재 목록' : '') + ').');
     });
   }
   function exportCsv() {
@@ -465,9 +674,9 @@
     document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
   }
-  var PNG_COLORS = { existing: '#1b7f3b', mapping: '#b07800', 'new': '#c62828', empty: '#6b7280' };
-  var TAG_BG = { existing: '#1b7f3b', mapping: '#f2c14e', 'new': '#c62828', empty: '#6b7280' };
-  var TAG_FG = { existing: '#ffffff', mapping: '#2b2000', 'new': '#ffffff', empty: '#ffffff' };
+  var PNG_COLORS = { existing: '#1b7f3b', customer: '#b07800', mapping: '#6a3d9a', 'new': '#c62828', empty: '#6b7280' };
+  var TAG_BG = { existing: '#1b7f3b', customer: '#f2c14e', mapping: '#6a3d9a', 'new': '#c62828', empty: '#6b7280' };
+  var TAG_FG = { existing: '#ffffff', customer: '#2b2000', mapping: '#ffffff', 'new': '#ffffff', empty: '#ffffff' };
   // 표시된 도면 PNG — 쪽 그림 + 상자(선 모양·라벨 병행) + 아래쪽 범례 띠
   function pagePng(pno, res) {
     var d = D(), pg = d.pages[pno - 1];
@@ -489,14 +698,15 @@
           g.strokeStyle = 'rgba(198,40,40,.35)'; g.lineWidth = 1.2 * k;
           for (var t = -hh; t < w; t += 6 * k) { g.beginPath(); g.moveTo(x + t, y + hh); g.lineTo(x + t + hh, y); g.stroke(); }
           g.restore();
-        } else if (r.status === 'mapping') { g.fillStyle = 'rgba(240,180,0,.18)'; g.fillRect(x, y, w, hh); }
+        } else if (r.status === 'customer') { g.fillStyle = 'rgba(240,180,0,.22)'; g.fillRect(x, y, w, hh); }
+        else if (r.status === 'mapping') { g.fillStyle = 'rgba(106,61,154,.12)'; g.fillRect(x, y, w, hh); }
         else if (r.status === 'existing') { g.fillStyle = 'rgba(27,127,59,.10)'; g.fillRect(x, y, w, hh); }
-        g.strokeStyle = c; g.lineWidth = (r.status === 'new' ? 2.2 : 2) * k;
-        g.setLineDash(r.status === 'mapping' ? [6 * k, 4 * k] : r.status === 'empty' ? [2 * k, 3 * k] : []);
+        g.strokeStyle = c; g.lineWidth = (r.status === 'new' ? 2.2 : r.status === 'customer' ? 3 : 2) * k;
+        g.setLineDash(r.status === 'mapping' || (r.status === 'customer' && !r.code) ? [6 * k, 4 * k] : r.status === 'empty' ? [2 * k, 3 * k] : []);
         g.strokeRect(x, y, w, hh);
         if (r.status === 'new') { g.lineWidth = 1 * k; g.strokeRect(x - 3 * k, y - 3 * k, w + 6 * k, hh + 6 * k); }
         g.setLineDash([]);
-        var label = r.no + ' ' + DL.STATUS[r.status].label;
+        var label = tagLabel(r);
         g.font = 'bold ' + Math.round(11 * k) + 'px ' + font;
         var tw = g.measureText(label).width + 8 * k, th = 15 * k, ty = y - th - (r.status === 'new' ? 3 * k : 0);
         if (ty < 0) ty = y + hh + 2 * k;
@@ -510,8 +720,8 @@
       g.strokeStyle = '#d5dbe2'; g.lineWidth = 1; g.beginPath(); g.moveTo(0, by + 0.5); g.lineTo(out.width, by + 0.5); g.stroke();
       g.font = Math.round(13 * k) + 'px ' + font; g.textBaseline = 'middle';
       var lx = 12 * k, ly = by + band / 2;
-      ['existing', 'mapping', 'new', 'empty'].forEach(function (st) {
-        g.strokeStyle = PNG_COLORS[st]; g.lineWidth = 2 * k;
+      DL.STATUS_ORDER.forEach(function (st) {
+        g.strokeStyle = PNG_COLORS[st]; g.lineWidth = (st === 'customer' ? 3 : 2) * k;
         g.setLineDash(st === 'mapping' ? [6 * k, 4 * k] : st === 'empty' ? [2 * k, 3 * k] : []);
         g.strokeRect(lx, ly - 8 * k, 26 * k, 16 * k); g.setLineDash([]);
         if (st === 'new') { g.lineWidth = 1 * k; g.strokeRect(lx - 3 * k, ly - 11 * k, 32 * k, 22 * k); }
@@ -574,7 +784,7 @@
     // 새로고침 뒤: 예시는 저장된 표시를 유지한 채 도면만 다시 그림
     if (d.sample && !ui.doc && !ui.img && !ui.loading && !ui.autoTried && root.DrawSamplePdf) {
       ui.autoTried = true;
-      setTimeout(function () { loadSample(d.sample === 'scan', true); }, 0);
+      setTimeout(function () { loadSample(d.sample === true ? 'pdf' : d.sample, true); }, 0);
     }
     var res = classify();
     lastRows = res.rows;
@@ -582,9 +792,10 @@
     out.push(h('div', { class: 'page-head' },
       h('h1', { text: '2. 도면 자재 판별' }),
       h('div', { class: 'actions', style: 'margin-top:0' },
-        h('button', { type: 'button', class: 'btn', onclick: function () { askSample(false); }, text: '예시 도면 불러오기(PDF)' }),
-        h('button', { type: 'button', class: 'btn', onclick: function () { askSample(true); }, text: '예시: 스캔 이미지로' }))));
-    out.push(h('p', { class: 'lead', text: '도면 위에 자재 위치를 기존·매핑 필요·신규로 표시하고, 같은 내용을 엑셀 목록으로 따로 뽑습니다. 표의 행을 누르면 도면의 그 위치로, 도면의 표시를 누르면 표의 그 행으로 갑니다.' }));
+        h('button', { type: 'button', class: 'btn', onclick: function () { askSample('pdf'); }, text: '예시 A: 라벨형 PDF' }),
+        h('button', { type: 'button', class: 'btn', onclick: function () { askSample('table'); }, text: '예시 B: 부품표형 PDF' }),
+        h('button', { type: 'button', class: 'btn', onclick: function () { askSample('scan'); }, text: '예시 A: 스캔 이미지로' }))));
+    out.push(h('p', { class: 'lead', text: '도면 위에 자재 위치를 기존(제조사 품번)·고객사 품번·확인 필요·신규로 표시하고, 같은 내용을 엑셀 목록으로 따로 뽑습니다. 고객사마다 도면 그리는 방식이 달라, 고객사별 규칙(품번 모양·표제란 글자·대조표·부품표 열)을 가르쳐 두면 같은 고객사 도면에 저절로 적용됩니다.' }));
     if (!st.masters.map) {
       out.push(h('div', { class: 'notice warn' }, '부품 매핑 마스터(통합 자재 마스터)가 아직 없어 모든 품번이 「신규」로 보입니다. ',
         h('a', { href: '#/masters', text: '1. 마스터 데이터' }), '에서 먼저 불러와 주세요.'));
@@ -593,15 +804,28 @@
     if (ui.loading) out.push(h('div', { class: 'notice info', role: 'status', text: ui.loading }));
     if (!d.fileName) {
       out.push(h('div', { class: 'notice info' },
-        h('p', null, '처음 쓰신다면 「예시 도면 불러오기(PDF)」로 흐름을 먼저 보실 수 있습니다. 가상의 통합 자재 마스터 11행과, 커넥터·클립 등 품번이 15곳에 적힌 도면 1쪽이 들어갑니다. 「예시: 스캔 이미지로」는 글자 레이어가 없는 스캔본을 가정해 도면 위를 눌러 표시하는 흐름입니다.'),
+        h('p', null, '처음 쓰신다면 예시로 흐름을 먼저 보실 수 있습니다. 모두 가상 자료입니다.'),
+        h('ul', { class: 'small' },
+          h('li', null, h('b', { text: '예시 A: 라벨형 PDF' }), ' — 부품 그림 옆에 품번을 적는 고객사(예시고객사A). 품번이 15곳에 적힌 도면 1쪽'),
+          h('li', null, h('b', { text: '예시 B: 부품표형 PDF' }), ' — 품번을 도면의 부품표(ITEM · CUSTOMER P/N · MAKER P/N · DESCRIPTION · Q\'TY)에 모아 적는 고객사(예시고객사B)'),
+          h('li', null, h('b', { text: '예시 A: 스캔 이미지로' }), ' — 글자 레이어가 없는 스캔본을 가정해 도면 위를 눌러 표시하는 흐름')),
+        h('p', { class: 'small' }, '두 예시 모두 고객사 규칙 2개(A·B)와 커넥터 부자재 마스터가 함께 들어가, 표제란 글자로 고객사를 알아보고 규칙을 저절로 적용하는 모습을 볼 수 있습니다.'),
         h('p', { class: 'small' }, '예시 파일: ', h('a', { href: 'samples/예시도면_하네스_가상.pdf', text: '예시도면_하네스_가상.pdf' }), ' · ',
-          h('a', { href: 'samples/예시데이터_통합자재마스터.xlsx', text: '통합자재마스터.xlsx' }))));
+          h('a', { href: 'samples/예시도면_부품표형_가상.pdf', text: '예시도면_부품표형_가상.pdf' }), ' · ',
+          h('a', { href: 'samples/예시데이터_통합자재마스터.xlsx', text: '통합자재마스터.xlsx' }), ' · ',
+          h('a', { href: 'samples/예시데이터_커넥터부자재마스터.xlsx', text: '커넥터부자재마스터.xlsx' }), ' · ',
+          h('a', { href: 'samples/예시데이터_고객사대조표_B.xlsx', text: '고객사대조표_B.xlsx' }), ' · ',
+          h('a', { href: 'samples/예시데이터_고객사규칙.json', text: '고객사규칙.json' }))));
+      out.push(profilesCard());
       out.push(rulesCard());
       return out;
     }
     out.push(summaryTiles(res));
+    if (ui.tableDraft || D().table) out.push(tableCard());
     out.push(h('div', { class: 'draw-layout' }, viewerPanel(), tablePanel(res)));
+    var bc = bomCard(res); if (bc) out.push(bc);
     out.push(exportCard(res));
+    out.push(profilesCard());
     out.push(rulesCard());
     setTimeout(paint, 0);
     return out;
@@ -619,7 +843,14 @@
       h('label', { class: 'field' }, '도면 번호', h('span', { class: 'hint', text: '내보낼 파일 이름에 씁니다' }), h('input', { type: 'text', value: d.info.drawingNo, onchange: upd('drawingNo') })),
       h('label', { class: 'field' }, '고객사', h('span', { class: 'hint', text: '마스터의 고객사 열과 같게 적으면 이 고객사 품번으로 대조합니다' }),
         h('input', { type: 'text', value: d.info.customer, list: 'dv-custs', onchange: upd('customer') }),
-        h('datalist', { id: 'dv-custs' }, Object.keys(custs).map(function (c) { return h('option', { value: c }); })))));
+        h('datalist', { id: 'dv-custs' }, Object.keys(custs).map(function (c) { return h('option', { value: c }); }))),
+      h('label', { class: 'field' }, '고객사 규칙', h('span', { class: 'hint', text: 'PDF 는 표제란 글자로 저절로 고릅니다. 스캔·이미지는 직접 골라 주세요' }),
+        h('select', { 'aria-label': '고객사 규칙', onchange: function (e) { chooseProfile(e.target.value); } },
+          h('option', { value: '', text: '(규칙 없음 — 기본 품번 후보 규칙)' }),
+          profiles().map(function (p) { return h('option', { value: p.id, selected: p.id === d.profileId, text: p.name + ' · ' + (p.layout === 'table' ? '부품표형' : '라벨형') }); })))));
+    var ap = activeProfile();
+    if (ap) card.appendChild(h('p', { class: 'small' }, ctx.badge(d.profileAuto ? '고객사 규칙 자동 적용' : '고객사 규칙 직접 고름', d.profileAuto ? 'ok' : 'info'), ' ',
+      h('b', { text: ap.name }), ' · ' + (ap.layout === 'table' ? '부품표형' : '라벨형') + ' · 품번 모양 ' + ap.patterns.length + '개 · 대조표 ' + ap.xref.length + '행' + (ap.keywords.length ? ' · 알아보기 글자 「' + ap.keywords.join('」 「') + '」' : '')));
     if (d.fileName) {
       var loaded = ui.docFor === d.fileName && (ui.doc || ui.img);
       card.appendChild(h('p', { class: 'small' }, h('b', { text: d.fileName }), ' · ', d.type === 'pdf' ? 'PDF ' + d.pages.length + '쪽 (좌표 단위 pt)' : '이미지 ' + d.pages[0].w + '×' + d.pages[0].h + 'px',
@@ -638,13 +869,22 @@
     }
     return card;
   }
+  function chooseProfile(id) {
+    var d = D(), p = profiles().filter(function (x) { return x.id === id; })[0];
+    d.profileId = p ? p.id : ''; d.profileAuto = false;
+    if (p) d.info.customer = p.name;
+    if (d.table) d.table.fixed = false;
+    relearn(p ? '「' + p.name + '」 규칙을 적용했습니다.' : '고객사 규칙을 끄고 기본 규칙으로 봅니다.');
+  }
   function reextract() {
     if (!ui.doc) return;
     var manual = D().marks.filter(function (m) { return m.src !== 'pdf'; }).length;
     pdfPagesAndItems(ui.doc).then(function (r) {
+      ui.items = r.items;
       var n = extractInto(r.items, true);
       ui.sel = null; saveScroll(); ctx.save(); ctx.render();
-      ctx.toast('품번 후보 ' + n + '개를 다시 찾았습니다' + (manual ? '(직접 표시한 ' + manual + '개는 그대로 둠).' : '.'));
+      if (n < 0) ctx.toast('부품표를 찾지 못했습니다. 「표 영역 지정」으로 표를 끌어 감싸 주세요.', true);
+      else ctx.toast('품번 후보 ' + n + '개를 다시 찾았습니다' + (manual ? '(직접 표시한 ' + manual + '개는 그대로 둠).' : '.'));
     });
   }
   function summaryTiles(res) {
@@ -670,13 +910,19 @@
         h('button', { type: 'button', class: 'btn btn-small', text: '폭 맞춤', onclick: function () { ui.fit = true; ui.scroll = { x: 0, y: 0 }; ctx.render(); } })),
       h('div', { class: 'dv-group seg', role: 'group', 'aria-label': '누르면' },
         h('button', { type: 'button', class: 'btn btn-small' + (ui.mode === 'select' ? ' on' : ''), 'aria-pressed': ui.mode === 'select' ? 'true' : 'false', text: '선택', onclick: function () { ui.mode = 'select'; saveScroll(); ctx.render(); } }),
-        h('button', { type: 'button', class: 'btn btn-small' + (ui.mode === 'mark' ? ' on' : ''), 'aria-pressed': ui.mode === 'mark' ? 'true' : 'false', text: '위치 표시', onclick: function () { ui.mode = 'mark'; saveScroll(); ctx.render(); } })));
+        h('button', { type: 'button', class: 'btn btn-small' + (ui.mode === 'mark' ? ' on' : ''), 'aria-pressed': ui.mode === 'mark' ? 'true' : 'false', text: '위치 표시', onclick: function () { ui.mode = 'mark'; saveScroll(); ctx.render(); } }),
+        ui.items ? h('button', { type: 'button', class: 'btn btn-small' + (ui.mode === 'learn' ? ' on' : ''), 'aria-pressed': ui.mode === 'learn' ? 'true' : 'false', text: '규칙 가르치기', onclick: function () { ui.mode = 'learn'; saveScroll(); ctx.render(); } }) : null,
+        ui.items ? h('button', { type: 'button', class: 'btn btn-small' + (ui.mode === 'table' ? ' on' : ''), 'aria-pressed': ui.mode === 'table' ? 'true' : 'false', text: '표 영역 지정', onclick: function () { ui.mode = 'table'; saveScroll(); ctx.render(); } }) : null));
     var panel = h('section', { class: 'card dv-view', 'aria-label': '도면 보기' }, bar);
-    panel.appendChild(h('p', { class: 'small muted dv-hint', text: ui.mode === 'mark'
-      ? '위치 표시: 도면을 한 번 누르면 기본 크기 상자, 끌면 끈 만큼의 상자가 생깁니다. 품번은 배치 대기열에서 차례로 들어가고, 대기열이 비었으면 표에서 입력합니다.'
-      : '선택: 도면의 표시를 누르면 표의 그 행으로 갑니다. 새 위치를 표시하려면 「위치 표시」를 눌러 주세요.' }));
+    var HINT = {
+      mark: '위치 표시: 도면을 한 번 누르면 기본 크기 상자, 끌면 끈 만큼의 상자가 생깁니다. 품번은 배치 대기열에서 차례로 들어가고, 대기열이 비었으면 표에서 입력합니다.',
+      learn: '규칙 가르치기: 도면의 글자(파란 점선)를 누르고 「제조사 품번 예」「고객사 품번 예」「고객사 알아보기 글자」「품번 아님」 중 하나를 골라 주세요. 같은 모양의 글자는 이 고객사 도면에서 같게 봅니다. 초록=제조사 품번 모양, 노랑=고객사 품번 모양, 파랑 실선=알아보기 글자, 회색=품번 아님.',
+      table: '표 영역 지정: 도면의 부품표를 머리글 줄까지 끌어서 감싸 주세요. 머리글과 열 위치를 읽어 아래 「도면 부품표 열 연결」에 보여 드립니다.',
+      select: '선택: 도면의 표시를 누르면 표의 그 행으로 갑니다. 새 위치를 표시하려면 「위치 표시」를 눌러 주세요.'
+    };
+    panel.appendChild(h('p', { class: 'small muted dv-hint', text: HINT[ui.mode] || HINT.select }));
     if (ui.mode === 'mark' || d.type === 'image') panel.appendChild(queueBox());
-    var stage = h('div', { id: 'dv-stage', class: 'dv-stage' + (ui.mode === 'mark' ? ' marking' : '') },
+    var stage = h('div', { id: 'dv-stage', class: 'dv-stage' + (ui.mode === 'mark' || ui.mode === 'table' ? ' marking' : '') + (ui.mode === 'learn' ? ' learning' : '') },
       h('div', { class: 'dv-holder' }, (ui.doc || ui.img) ? h('span', { class: 'small muted dv-wait', text: '도면을 그리는 중…' }) : h('span', { class: 'small muted dv-wait', text: '도면 파일을 다시 올리면 여기에 그림이 나옵니다. 표시 위치는 저장돼 있습니다.' })),
       h('div', { class: 'dv-marks' }));
     bindMarking(stage);
@@ -730,15 +976,16 @@
         h('td', null, h('input', { type: 'text', class: 'dv-pn pn', value: r.pn, 'aria-label': r.no + '번 도면 표기 품번', placeholder: '품번 입력', onfocus: function () { if (ui.sel !== r.id) { ui.sel = r.id; applySel(); scrollToMarkIfSamePage(r); } }, onchange: function (e) {
           var m = D().marks.filter(function (x) { return x.id === r.id; })[0]; if (!m) return;
           m.pn = e.target.value.trim(); saveScroll(); ctx.save(); ctx.render();
-        } }), h('div', { class: 'small muted', text: r.src === 'pdf' ? 'PDF 글자' : '직접 표시' })),
+        } }), h('div', { class: 'small muted', text: srcText(r) })),
         h('td', null, h('input', { type: 'text', class: 'dv-kind', value: r.kindManual ? r.kind : '', placeholder: r.kind ? r.kind + (r.kindGuess ? '(추정)' : '') : '종류', 'aria-label': r.no + '번 자재 종류', onchange: function (e) {
           var m = D().marks.filter(function (x) { return x.id === r.id; })[0]; if (!m) return;
           m.kind = e.target.value.trim(); saveScroll(); ctx.save(); ctx.render();
         } })),
-        h('td', { class: 'dv-judge' }, h('div', { class: 'dv-judge-top' }, ctx.badge(DL.STATUS[r.status].long + (r.confirmed ? '(확정)' : ''), r.status === 'existing' ? 'ok' : r.status === 'mapping' ? 'warn' : r.status === 'new' ? 'bad' : 'info'),
+        h('td', { class: 'dv-judge' }, h('div', { class: 'dv-judge-top' }, ctx.badge(DL.STATUS[r.status].long + (r.status === 'customer' ? (r.code ? '·매핑됨' : '·매핑 없음') : '') + (r.confirmed ? '(확정)' : ''), BADGE[r.status]),
           r.code ? h('span', { class: 'pn dv-code', text: r.code }) : null),
-          r.mfr || r.name ? h('div', { class: 'small muted', text: [r.mfr, r.name].filter(Boolean).join(' · ') }) : null,
-          h('div', { class: 'small dv-detail', text: r.detail })),
+          r.mfr || r.name ? h('div', { class: 'small muted', text: (r.isCust && r.mfr ? '제조사 품번 ' : '') + [r.mfr, r.name].filter(Boolean).join(' · ') }) : null,
+          h('div', { class: 'small dv-detail', text: r.detail }),
+          subLine(r)),
         h('td', null, actionSelect(r)));
       return tr;
     });
@@ -751,6 +998,81 @@
       h('tbody', null, body))));
     return panel;
   }
+  var BADGE = { existing: 'ok', customer: 'warn', mapping: 'check', 'new': 'bad', empty: 'info' };
+  function srcText(r) {
+    var t = r.src === 'pdf' ? 'PDF 글자' : r.src === 'table' ? '도면 부품표' : '직접 표시';
+    var k = DL.pnTypeText(r);
+    if (k) t += ' · ' + k;
+    if (r.src === 'table' && r.custPn && r.custPn !== r.pn) t += ' (고객사 품번 ' + r.custPn + ')';
+    if (r.src === 'table' && r.qty !== '') t += ' · 수량 ' + r.qty;
+    return t;
+  }
+  // 커넥터 → 부자재(사내 DB 흉내). 켜 두면 「부자재 포함 자재 목록」에 펼칩니다
+  function subLine(r) {
+    var subs = r.pn ? LR.subsFor(r, subRows(), S().settings.norm) : [];
+    if (!subs.length) return null;
+    var h = ctx.h, off = !!S().drawSubOff[r.key];
+    return h('div', { class: 'dv-subs small' },
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !off, onchange: function (e) {
+        if (e.target.checked) delete S().drawSubOff[r.key]; else S().drawSubOff[r.key] = true;
+        saveScroll(); ctx.save(); ctx.render();
+      } }), h('span', { text: '부자재 ' + subs.length + '종 자재 목록에 펼치기' })),
+      h('div', { class: 'muted', text: subs.map(function (x) { return (x.kind ? x.kind + ' ' : '') + x.pn + ' ×' + (x.qty || 1); }).join(' · ') }));
+  }
+  function bomCard(res) {
+    var lines = bomLines(res);
+    if (!lines) return null;
+    var h = ctx.h, nSub = lines.filter(function (l) { return l.level === 'sub'; }).length;
+    return h('details', { class: 'card dv-bom' },
+      h('summary', null, h('b', { text: '부자재 포함 자재 목록' }), h('span', { class: 'small muted', text: ' — 도면 자재 ' + (lines.length - nSub) + '종 + 커넥터 부자재 ' + nSub + '줄(커넥터 부자재 마스터 기준). 엑셀에 같은 시트가 들어갑니다' })),
+      h('div', { class: 'table-wrap', style: 'margin-top:10px' }, h('table', null,
+        h('thead', null, h('tr', null, ['구분', '자재 종류', '품번', '사내 자재 코드', '수량', '신규 여부·출처', '비고'].map(function (x) { return h('th', { text: x }); }))),
+        h('tbody', null, lines.map(function (l) {
+          return h('tr', { class: l.level === 'sub' ? 'dv-subrow' : '' }, h('td', { text: l.level === 'main' ? '도면 자재' : '└ 부자재(' + l.parent + ')' }), h('td', { text: l.kind }),
+            h('td', { class: 'pn', text: l.pn }), h('td', { class: 'pn', text: l.code }), h('td', { class: 'num', text: String(l.qty) }), h('td', { text: l.status }), h('td', { class: 'small', text: l.note }));
+        })))));
+  }
+  // 도면 부품표 열 연결(표 영역을 새로 지정했거나 고객사 규칙으로 저절로 읽은 표)
+  function tableCard() {
+    var h = ctx.h, d = D(), dr = ui.tableDraft, prof = activeProfile();
+    var card = h('section', { class: 'card', id: 'dv-tablecard', 'aria-label': '도면 부품표 열 연결' });
+    card.appendChild(h('h2', { text: '도면 부품표 열 연결' }));
+    if (!dr) {
+      var t = d.table;
+      card.appendChild(h('p', { class: 'small' }, (t.page ? t.page + '쪽 부품표 · ' : '') + '열 ', t.header.map(function (x, i) {
+        return h('span', { class: 'dv-colchip' }, h('code', { text: x }), ' → ' + LR.TABLE_ROLES[t.roles[i]]);
+      })));
+      card.appendChild(h('div', { class: 'actions' },
+        ui.items ? h('button', { type: 'button', class: 'btn btn-small', text: '열 연결 고치기', onclick: function () {
+          var tt = t.fixed && t.region ? LR.parseTable(ui.items, { page: t.page, region: t.region, saved: prof ? prof.table.roles : null }) : findTable(ui.items, prof);
+          if (!tt) { ctx.toast('표를 다시 읽지 못했습니다. 「표 영역 지정」으로 감싸 주세요.', true); return; }
+          ui.tableDraft = { table: tt, roles: t.roles.length === tt.header.length ? t.roles.slice() : LR.guessRoles(tt.header.map(function (x) { return x.text; }), prof ? prof.table.roles : null) };
+          saveScroll(); ctx.render();
+        } }) : h('span', { class: 'small muted', text: '고치려면 도면 PDF 를 다시 올려 주세요.' }),
+        ui.items ? h('button', { type: 'button', class: 'btn btn-small', text: '표 영역 다시 지정', onclick: function () { ui.mode = 'table'; saveScroll(); ctx.render(); } }) : null));
+      return card;
+    }
+    card.appendChild(h('p', { class: 'small', text: '도면 표의 머리글마다 무슨 열인지 골라 주세요. 한 행에 제조사 품번이 있으면 그것으로(초록 판별), 없으면 고객사 품번으로(노랑 판별) 도면 위에 표시합니다. 수량 열은 자재 목록의 수량이 됩니다.' }));
+    var grid = h('div', { class: 'dv-colmap' });
+    dr.table.header.forEach(function (x, i) {
+      grid.appendChild(h('label', { class: 'field' }, h('code', { text: x.text }),
+        h('select', { 'aria-label': x.text + ' 열 역할', onchange: function (e) { dr.roles[i] = e.target.value; saveScroll(); ctx.render(); } },
+          Object.keys(LR.TABLE_ROLES).map(function (k) { return h('option', { value: k, selected: dr.roles[i] === k, text: LR.TABLE_ROLES[k] }); }))));
+    });
+    card.appendChild(grid);
+    var prev = LR.tableMarks(dr.table, dr.roles);
+    card.appendChild(h('p', { class: 'small', text: '미리보기 — 표 ' + dr.table.rows.length + '행 중 품번이 있는 ' + prev.length + '행' }));
+    card.appendChild(h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, dr.table.header.map(function (x, i) { return h('th', { text: x.text + ' (' + LR.TABLE_ROLES[dr.roles[i]] + ')' }); }))),
+      h('tbody', null, dr.table.rows.slice(0, 8).map(function (row) { return h('tr', null, row.cells.map(function (c) { return h('td', { class: 'pn', text: c ? c.text : '' }); })); })))));
+    var save = prof ? h('input', { type: 'checkbox', checked: true }) : null;
+    if (save) card.appendChild(h('label', { class: 'check' }, save, h('span', { text: '「' + prof.name + '」 규칙에 이 열 연결을 저장(다음 도면은 같은 머리글이면 저절로 연결)' })));
+    else card.appendChild(h('p', { class: 'small muted', text: '고객사 규칙을 고르면 이 열 연결을 규칙에 저장해 다음 도면에 다시 씁니다.' }));
+    card.appendChild(h('div', { class: 'actions' },
+      h('button', { type: 'button', class: 'btn btn-primary', text: '이 열 연결로 품번 뽑기', onclick: function () { applyTableDraft(save && save.checked); } }),
+      h('button', { type: 'button', class: 'btn', text: '취소', onclick: function () { ui.tableDraft = null; saveScroll(); ctx.render(); } })));
+    return card;
+  }
   function scrollToMarkIfSamePage(r) { if (r.page === ui.page) scrollToMark(r.id, true); }
   function exportCard(res) {
     var h = ctx.h;
@@ -758,7 +1080,7 @@
       h('h2', { text: '내보내기 — 산출물 2가지' }),
       h('div', { class: 'grid-2' },
         h('div', null, h('h3', { text: '산출물 1 · 표시된 도면 이미지' }),
-          h('p', { class: 'small muted', text: '도면 위에 기존(초록 실선)·매핑 필요(노랑 점선)·신규(빨강 겹선·빗금)·미입력(회색 점) 상자와 번호 라벨, 아래에 범례를 넣은 PNG 입니다.' }),
+          h('p', { class: 'small muted', text: '도면 위에 기존·제조사 품번(초록 실선)·고객사 품번(노랑 굵은 실선, 매핑 없으면 노랑 점선)·확인 필요(보라 점선)·신규(빨강 겹선·빗금)·미입력(회색 점) 상자와 번호 라벨, 아래에 범례를 넣은 PNG 입니다.' }),
           h('div', { class: 'actions' },
             h('button', { type: 'button', class: 'btn btn-primary', text: '이 쪽 PNG', onclick: function () { exportPng(false); } }),
             D().pages.length > 1 ? h('button', { type: 'button', class: 'btn', text: '모든 쪽 PNG', onclick: function () { exportPng(true); } }) : null)),
@@ -767,8 +1089,162 @@
           h('div', { class: 'actions' },
             h('button', { type: 'button', class: 'btn btn-primary', text: '엑셀 내보내기', onclick: exportXlsx }),
             h('button', { type: 'button', class: 'btn', text: 'CSV', onclick: exportCsv })))),
-      res.count.mapping + res.count.empty ? h('p', { class: 'small', style: 'margin-top:10px' }, ctx.badge('확인 필요 ' + (res.count.mapping + res.count.empty) + '개', 'warn'), ' 매핑 필요·품번 미입력이 남아 있어도 내보낼 수 있고, 엑셀 「확인 필요」 시트에 따로 모입니다.') : null);
+      res.open ? h('p', { class: 'small', style: 'margin-top:10px' }, ctx.badge('손볼 항목 ' + res.open + '개', 'warn'), ' 확인 필요·품번 미입력·매핑 없는 고객사 품번·확정 전 신규가 남아 있어도 내보낼 수 있고, 엑셀 「확인 필요」 시트에 따로 모입니다.') : null);
   }
+  // ── 고객사별 학습 규칙 카드 ─────────────────────────────────
+  function readAoa(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onerror = function () { reject(new Error('파일을 읽지 못했습니다')); };
+      fr.onload = function () {
+        try {
+          var buf = new Uint8Array(fr.result), wb;
+          if (/\.(csv|txt)$/i.test(file.name)) {
+            var text;
+            try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { text = new TextDecoder('euc-kr').decode(buf); }
+            wb = XLSX.read(text.replace(/^\ufeff/, ''), { type: 'string', raw: true });
+          } else wb = XLSX.read(buf, { type: 'array' });
+          var name = wb.SheetNames.filter(function (n) { return wb.Sheets[n]['!ref']; })[0] || wb.SheetNames[0];
+          resolve(XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: '' }));
+        } catch (e) { reject(new Error('엑셀·CSV 형식으로 읽지 못했습니다: ' + e.message)); }
+      };
+      fr.readAsArrayBuffer(file);
+    });
+  }
+  function editProfile() {
+    var id = ui.editId || D().profileId;
+    return profiles().filter(function (p) { return p.id === id; })[0] || profiles()[0] || null;
+  }
+  function saveProfile(msg, reextractToo) {
+    var p = editProfile(); if (p) p.at = ctx.today();
+    if (reextractToo && p && p.id === D().profileId) relearn(msg || '규칙을 고쳤습니다.');
+    else { ctx.save(); saveScroll(); ctx.render(); if (msg) ctx.toast(msg); }
+  }
+  function exportProfiles() {
+    var list = profiles();
+    if (!list.length) { ctx.toast('내보낼 고객사 규칙이 없습니다.', true); return; }
+    download(new Blob([JSON.stringify({ tool: 'data09-16', kind: 'customer-profiles', at: ctx.today(), profiles: list }, null, 2)], { type: 'application/json' }), '고객사규칙_' + ctx.today() + '.json');
+  }
+  function importProfiles(file) {
+    var fr = new FileReader();
+    fr.onload = function () {
+      try {
+        var j = JSON.parse(String(fr.result)), arr = Array.isArray(j) ? j : j.profiles;
+        if (!Array.isArray(arr) || !arr.length) throw new Error('규칙 목록이 없습니다');
+        var list = profiles(), n = 0;
+        arr.forEach(function (raw) {
+          var p = LR.normalizeProfile(raw);
+          if (!p.name) return;
+          var i = list.map(function (x) { return x.id; }).indexOf(p.id);
+          if (i >= 0) list[i] = p; else list.push(p);
+          n++;
+        });
+        ctx.save(); saveScroll(); ctx.render(); ctx.toast('고객사 규칙 ' + n + '개를 가져왔습니다(같은 id 는 바꿈).');
+      } catch (e) { ctx.toast('규칙 파일을 읽지 못했습니다: ' + e.message, true); }
+    };
+    fr.readAsText(file);
+  }
+  function lines(v) { return String(v || '').split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean); }
+  function profilesCard() {
+    var h = ctx.h, list = profiles(), p = editProfile(), d = D();
+    var card = h('details', { class: 'card dv-prof', open: ui.profileOpen || null, ontoggle: function (e) { ui.profileOpen = e.target.open; } });
+    card.appendChild(h('summary', null, h('b', { text: '고객사별 학습 규칙' }), h('span', { class: 'small muted', text: ' — ' + list.length + '개 · 고객사마다 다른 도면 방식(라벨형·부품표형), 품번 모양, 고객사 대조표, 부품표 열' })));
+    card.appendChild(h('div', { class: 'notice info small' },
+      h('p', null, h('b', { text: '이것은 AI 학습(기계학습)이 아니라 「예시로 배우는 규칙」입니다. ' }), '담당자가 도면 글자를 눌러 「제조사 품번 예」「고객사 품번 예」「고객사 알아보기 글자」「품번 아님」을 알려 주면, 그 예시로 품번 모양 규칙(정규식)과 표제란 글자·제외 목록을 고객사별로 쌓습니다. 같은 고객사 도면을 올리면 표제란 글자로 알아보고 그 규칙을 저절로 적용합니다. 규칙은 모두 눈으로 보고 고칠 수 있습니다.'),
+      h('p', null, '실제 AI 학습(도면을 보고 품번 위치를 스스로 찾는 모델)은 2단계입니다. 고객사별로 품번 위치·종류를 표시한 정답 도면이 수십 장 이상 필요하고, 도면을 학습 환경에 올려도 되는지 보안 확인이 먼저입니다.')));
+    var head = h('div', { class: 'actions' },
+      h('button', { type: 'button', class: 'btn btn-small btn-primary', text: '새 고객사 규칙', onclick: function () {
+        var np = LR.newProfile(d.info.customer || '새 고객사'); np.at = ctx.today(); list.push(np); ui.editId = np.id; ui.profileOpen = true;
+        ctx.save(); saveScroll(); ctx.render();
+      } }),
+      h('button', { type: 'button', class: 'btn btn-small', text: '규칙 내보내기(JSON)', onclick: exportProfiles }),
+      h('label', { class: 'btn btn-small file-btn' }, '규칙 가져오기(JSON)', h('input', { type: 'file', accept: '.json,application/json', class: 'sr-only', onchange: function (e) { if (e.target.files[0]) importProfiles(e.target.files[0]); e.target.value = ''; } })));
+    card.appendChild(head);
+    if (!list.length) { card.appendChild(h('p', { class: 'small muted', text: '아직 규칙이 없습니다. 도면을 올린 뒤 「규칙 가르치기」로 글자를 누르거나 「새 고객사 규칙」을 눌러 주세요. 팀원에게는 「규칙 내보내기」 파일로 나눠 쓸 수 있습니다.' })); return card; }
+    card.appendChild(h('div', { class: 'dv-proflist' }, list.map(function (x) {
+      return h('button', { type: 'button', class: 'btn btn-small' + (p && x.id === p.id ? ' on' : ''), 'aria-pressed': p && x.id === p.id ? 'true' : 'false',
+        text: x.name + (x.id === d.profileId ? ' (이 도면에 적용 중)' : '') + (x.sample ? ' · 예시' : ''), onclick: function () { ui.editId = x.id; saveScroll(); ctx.render(); } });
+    })));
+    if (!p) return card;
+    var reX = p.id === d.profileId;
+    function upd(fn, msg) { return function (e) { fn(e.target); saveProfile(msg, reX); }; }
+    var body = h('div', { class: 'dv-profedit' });
+    body.appendChild(h('div', { class: 'form-grid' },
+      h('label', { class: 'field' }, '고객사 이름', h('span', { class: 'hint', text: '마스터의 고객사 열과 같게 적으면 이 고객사 품번으로 대조합니다' }), h('input', { type: 'text', value: p.name, onchange: upd(function (t) { p.name = t.value.trim() || p.name; if (reX) d.info.customer = p.name; }) })),
+      h('label', { class: 'field' }, '도면 방식', h('span', { class: 'hint', text: '라벨형: 부품 그림 옆에 품번 / 부품표형: 도면의 표에 품번을 모음' }),
+        h('select', { onchange: upd(function (t) { p.layout = t.value; if (reX) d.table = null; }, '도면 방식을 바꿨습니다.') },
+          h('option', { value: 'label', selected: p.layout === 'label', text: '라벨형 — 부품 그림 위·옆에 품번' }),
+          h('option', { value: 'table', selected: p.layout === 'table', text: '부품표형 — 도면 표에 품번' }))),
+      h('label', { class: 'field' }, '고객사 알아보기 글자(표제란)', h('span', { class: 'hint', text: '한 줄에 하나. 도면에 이 글자가 있으면 이 규칙을 저절로 적용합니다(예: CUSTOMER: SAMPLE-A)' }),
+        h('textarea', { rows: 2, value: p.keywords.join('\n'), onchange: upd(function (t) { p.keywords = lines(t.value); }) }))));
+    body.appendChild(h('div', { class: 'grid-2' },
+      h('label', { class: 'field' }, '제조사 품번 예', h('span', { class: 'hint', text: '한 줄에 하나. 이 예시로 제조사 품번 모양을 만듭니다(초록 판별)' }),
+        h('textarea', { rows: 3, value: p.examples.mfr.join('\n'), onchange: upd(function (t) { p.examples.mfr = lines(t.value); LR.rebuildPatterns(p); }, '제조사 품번 예를 고쳤습니다.') })),
+      h('label', { class: 'field' }, '고객사 품번 예', h('span', { class: 'hint', text: '한 줄에 하나. 이 예시로 고객사 품번 모양을 만듭니다(노랑 판별)' }),
+        h('textarea', { rows: 3, value: p.examples.cust.join('\n'), onchange: upd(function (t) { p.examples.cust = lines(t.value); LR.rebuildPatterns(p); }, '고객사 품번 예를 고쳤습니다.') }))));
+    // 품번 모양 규칙
+    var reIn = h('input', { type: 'text', placeholder: '^[A-Z]{2}-[0-9]{4}$', 'aria-label': '직접 적는 품번 모양(정규식)' }), reType = h('select', { 'aria-label': '품번 종류' }, h('option', { value: 'cust', text: '고객사 품번' }), h('option', { value: 'mfr', text: '제조사 품번' }));
+    body.appendChild(h('div', { class: 'field' }, h('b', { class: 'small', text: '품번 모양 규칙 ' + p.patterns.length + '개' }),
+      p.patterns.length ? h('ul', { class: 'small dv-pats' }, p.patterns.map(function (x, i) {
+        return h('li', null, ctx.badge(x.type === 'cust' ? '고객사 품번' : '제조사 품번', x.type === 'cust' ? 'warn' : 'ok'), ' ', h('code', { text: x.re }), x.auto ? h('span', { class: 'muted', text: ' (예시로 만듦)' }) : ' ',
+          h('button', { type: 'button', class: 'btn btn-small', text: '지우기', 'aria-label': x.re + ' 지우기', onclick: function () {
+            if (x.auto) p.examples[x.type] = p.examples[x.type].filter(function (ex) { return LR.inferPatterns([ex])[0] !== x.re; });
+            p.patterns.splice(i, 1); if (x.auto) LR.rebuildPatterns(p); saveProfile('품번 모양을 지웠습니다.', reX);
+          } }));
+      })) : h('p', { class: 'small muted', text: '아직 없습니다. 위에 예시를 적거나 도면에서 「규칙 가르치기」로 눌러 주세요.' }),
+      LR.patternConflicts(p).length ? h('p', { class: 'small notice warn', text: '제조사 품번과 고객사 품번에 같은 모양(' + LR.patternConflicts(p).join(', ') + ')이 있습니다. 이 모양의 글자는 모양만으로 구분하지 않고 마스터·대조표로 정합니다.' }) : null,
+      h('div', { class: 'dv-inline' }, reType, reIn, h('button', { type: 'button', class: 'btn btn-small', text: '직접 추가', onclick: function () {
+        var v = reIn.value.trim();
+        if (!v || !LR.validRe(v)) { ctx.toast('정규식을 확인해 주세요(예: ^[A-Z]{2}-[0-9]{4}$).', true); return; }
+        p.patterns.push({ re: v, type: reType.value, auto: false }); saveProfile('품번 모양을 추가했습니다.', reX);
+      } }))));
+    body.appendChild(h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: p.strict, onchange: upd(function (t) { p.strict = t.checked; }, t0('strict')) }),
+      h('span', { text: '학습한 품번 모양에 맞는 글자만 후보로 봄(마스터·대조표에 있는 품번은 예외). 도면 번호·회로 번호 같은 잡음이 빠집니다' })));
+    // 고객사 대조표
+    var xrefTa = h('textarea', { rows: 3, placeholder: '고객사 품번[탭]제조사 품번[탭]사내 코드(선택)\nCB-2210\tMX-2P-001', 'aria-label': '대조표 붙여넣기' });
+    body.appendChild(h('div', { class: 'field' }, h('b', { class: 'small', text: '고객사 대조표(고객사 품번 → 제조사 품번) ' + p.xref.length + '행' }),
+      h('span', { class: 'hint', text: '도면에 고객사 품번만 적힌 경우 이 표로 제조사 품번을 찾아 사내 코드에 맞춥니다. 통합 자재 마스터의 고객사 품번 열로 충분하면 비워 두셔도 됩니다' }),
+      p.xref.length ? h('div', { class: 'table-wrap' }, h('table', null, h('thead', null, h('tr', null, ['고객사 품번', '제조사 품번', '사내 코드', '품명'].map(function (x) { return h('th', { text: x }); }))),
+        h('tbody', null, p.xref.slice(0, 12).map(function (x) { return h('tr', null, h('td', { class: 'pn', text: x.cust }), h('td', { class: 'pn', text: x.mfr }), h('td', { class: 'pn', text: x.code }), h('td', { text: x.name })); })))) : null,
+      p.xref.length > 12 ? h('p', { class: 'small muted', text: '앞 12행만 보입니다.' }) : null,
+      h('div', { class: 'actions' },
+        h('label', { class: 'btn btn-small file-btn' }, '대조표 파일(엑셀·CSV)', h('input', { type: 'file', accept: '.xlsx,.xls,.csv', class: 'sr-only', onchange: function (e) {
+          var f = e.target.files[0]; e.target.value = ''; if (!f) return;
+          readAoa(f).then(function (aoa) {
+            var add = LR.parseXref(aoa);
+            if (!add.length) { ctx.toast('대조표에서 행을 찾지 못했습니다. 고객사 품번·제조사 품번 열이 있는지 확인해 주세요.', true); return; }
+            p.xref = LR.mergeXref(p.xref, add, S().settings.norm); saveProfile('대조표 ' + add.length + '행을 넣었습니다.', reX);
+          }).catch(function (err) { ctx.toast(err.message, true); });
+        } })),
+        p.xref.length ? h('button', { type: 'button', class: 'btn btn-small btn-danger', text: '대조표 비우기', onclick: function () { p.xref = []; saveProfile('대조표를 비웠습니다.', reX); } }) : null),
+      h('details', null, h('summary', { class: 'small', text: '엑셀에서 복사해 붙여넣기' }), xrefTa,
+        h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn btn-small', text: '대조표에 넣기', onclick: function () {
+          var aoa = xrefTa.value.split(/\r?\n/).filter(function (l) { return l.trim(); }).map(function (l) { return l.split(/\t|,/); });
+          var add = LR.parseXref(aoa);
+          if (!add.length) { ctx.toast('한 줄에 「고객사 품번 [탭] 제조사 품번」으로 붙여 넣어 주세요.', true); return; }
+          p.xref = LR.mergeXref(p.xref, add, S().settings.norm); saveProfile('대조표 ' + add.length + '행을 넣었습니다.', reX);
+        } })))));
+    var roleKeys = Object.keys(p.table.roles);
+    body.appendChild(h('div', { class: 'field' }, h('b', { class: 'small', text: '부품표 열 연결 ' + roleKeys.length + '개' }),
+      roleKeys.length ? h('p', { class: 'small' }, roleKeys.map(function (k) { return h('span', { class: 'dv-colchip' }, h('code', { text: k }), ' → ' + LR.TABLE_ROLES[p.table.roles[k]]); }),
+        h('button', { type: 'button', class: 'btn btn-small', text: '지우기', onclick: function () { p.table.roles = {}; saveProfile('부품표 열 연결을 지웠습니다.', false); } }))
+        : h('p', { class: 'small muted', text: '부품표형 도면에서 「표 영역 지정」 → 열 연결을 저장하면 여기에 쌓입니다.' })));
+    body.appendChild(h('label', { class: 'field' }, '이 고객사 제외 목록', h('span', { class: 'hint', text: '한 줄에 하나, * 는 아무 글자. 이 고객사 도면에서만 품번 후보에서 뺍니다' }),
+      h('textarea', { rows: 2, value: p.exclude, onchange: upd(function (t) { p.exclude = t.value; }) })));
+    body.appendChild(h('div', { class: 'actions' },
+      p.id !== d.profileId ? h('button', { type: 'button', class: 'btn btn-small btn-primary', text: '이 도면에 적용', onclick: function () { chooseProfile(p.id); } }) : null,
+      h('button', { type: 'button', class: 'btn btn-small btn-danger', text: '이 규칙 지우기', onclick: function () {
+        ctx.confirmBox('고객사 규칙 지우기', '「' + p.name + '」 규칙(예시·품번 모양·대조표·열 연결)을 지웁니다. 필요하면 먼저 「규칙 내보내기」로 보관해 주세요.', '지우기').then(function (ok) {
+          if (!ok) return;
+          var i = list.indexOf(p); if (i >= 0) list.splice(i, 1);
+          if (d.profileId === p.id) { d.profileId = ''; d.profileAuto = false; }
+          ui.editId = null; relearn('규칙을 지웠습니다.');
+        });
+      } })));
+    card.appendChild(body);
+    return card;
+  }
+  function t0(k) { return k === 'strict' ? '후보 범위를 바꿨습니다.' : ''; }
   function rulesCard() {
     var h = ctx.h, st = S(), ds = st.drawSettings;
     function upd(fn) { return function (e) { fn(e.target); st.drawSettings = DL.mergeDrawSettings(ds); saveScroll(); ctx.save(); ctx.render(); }; }
@@ -780,6 +1256,10 @@
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ds.needMix, onchange: upd(function (t) { ds.needMix = t.checked; }) }), h('span', { text: '영문과 숫자가 함께 있어야 후보로 봄(마스터에 있는 품번은 예외)' })),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ds.wireFilter, onchange: upd(function (t) { ds.wireFilter = t.checked; }) }), h('span', { text: '0.5SQ · 0.85mm2 · 20AWG 같은 전선 규격은 후보에서 뺌' })),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ds.confusable, onchange: upd(function (t) { ds.confusable = t.checked; }) }), h('span', { text: 'O↔0 · I·L↔1 · S↔5 · B↔8 · Z↔2 처럼 헷갈리는 글자만 다른 품번을 비슷한 품번으로 보여 줌' })),
+      h('label', { class: 'field', style: 'margin-top:8px' }, '마스터·대조표에 없는 고객사 품번', h('span', { class: 'hint', text: '고객사 규칙의 고객사 품번 모양이나 도면 표의 고객사 품번 열로 온 품번이 어디에도 없을 때' }),
+        h('select', { onchange: upd(function (t) { ds.unmappedCust = t.value; }) },
+          h('option', { value: 'customer', selected: ds.unmappedCust !== 'new', text: '노랑 — 고객사 품번(매핑 없음): 제조사 품번을 찾아 입력' }),
+          h('option', { value: 'new', selected: ds.unmappedCust === 'new', text: '빨강 — 신규 자재로 봄' }))),
       h('label', { class: 'field', style: 'margin-top:8px' }, '제외 목록', h('span', { class: 'hint', text: '한 줄에 하나. * 는 아무 글자(예: HN-24-*). 도면 번호처럼 품번이 아닌 글자를 넣어 두면 다음부터 후보에서 빠집니다' }),
         h('textarea', { rows: 3, value: ds.exclude, onchange: upd(function (t) { ds.exclude = t.value; }) })),
       h('p', { class: 'small muted', style: 'margin-top:8px', text: '최소 글자 수·영문숫자·전선 규격·제외 목록을 바꾸면 「PDF 글자에서 다시 찾기」를 눌러야 반영됩니다. 비슷한 품번·헷갈리는 글자 설정은 바로 반영됩니다.' }));

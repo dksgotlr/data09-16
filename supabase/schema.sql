@@ -12,7 +12,9 @@
 --  본인 프로젝트에 올리는 것을 전제로 하므로 테이블 이름에 접두사를 붙이지 않았습니다.
 --  회사 공용 URL·키는 어디에도 들어 있지 않습니다.
 --
---  테이블 (13개) — 2026-09-29 v0.2: 도면 자재 판별 3개(drawing_*) + app_settings.draw 칼럼 추가
+--  테이블 (15개) — 2026-09-29 v0.2: 도면 자재 판별 3개(drawing_*) + app_settings.draw 칼럼 추가
+--                   2026-09-29 v0.3: 고객사 규칙(customer_profile)·커넥터 부자재 행(sub_row) 추가,
+--                                    master_file·column_mapping kind 에 'sub', drawing_mark 에 부품표 칼럼, drawing_file.profile_name
 --    master_file     — 올린 마스터 엑셀 한 벌 (kind: map=부품 매핑 마스터 / spec=Application Spec)
 --    map_row         — 부품 매핑 마스터 한 행 (고객사 품번·제조사 품번·사내 자재 코드 …)
 --    spec_row        — Application Spec 한 행 (커넥터·터미널·실·방수전·전선 규격 범위)
@@ -26,6 +28,8 @@
 --    drawing_file    — 도면 자재 판별에 올린 도면 한 건 (파일 이름·PDF/이미지·쪽 크기·도면번호·고객사)
 --    drawing_mark    — 도면 위 자재 표시 한 개 (쪽·좌표·도면 표기 품번·자재 종류·추출 방식)
 --    drawing_choice  — 품번별 담당자 처리 (후보 선택·사내 코드 직접 입력·신규 확정)
+--    sub_row         — 커넥터 부자재 마스터 한 행 (커넥터 품번 → 부자재 품번·사내 코드·1개당 수량) — master_file kind='sub'
+--    customer_profile— 고객사별 학습 규칙 (도면 방식·품번 모양·알아보기 글자·대조표·부품표 열·제외 목록)
 --
 --  도면 PDF·이미지 원본은 저장하지 않습니다(고객사 설계 기밀). 도면에서 읽은 값(품번·좌표)만 저장합니다.
 -- ============================================================================
@@ -38,7 +42,7 @@
 create table if not exists public.master_file (
   id          bigint generated always as identity primary key,
   owner_id    uuid not null default auth.uid(),
-  kind        text not null check (kind in ('map', 'spec')),
+  kind        text not null,                             -- map · spec · sub (v0.3, 제약은 v0.3 do 블록)
   file_name   text not null check (length(btrim(file_name)) > 0),
   sheet       text not null default '',
   header_row  int not null default 0 check (header_row >= 0),
@@ -100,7 +104,7 @@ create table if not exists public.spec_row (
 -- 데이터를 지워도 남겨 다음 파일에 재사용한다 — 사용자·종류당 한 행
 create table if not exists public.column_mapping (
   owner_id    uuid not null default auth.uid(),
-  kind        text not null check (kind in ('map', 'spec')),
+  kind        text not null,                             -- map · spec · sub (v0.3, 제약은 v0.3 do 블록)
   col_names   jsonb not null default '{}'::jsonb check (jsonb_typeof(col_names) = 'object'),
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
@@ -230,7 +234,7 @@ create table if not exists public.drawing_mark (
   h            numeric not null check (h >= 0),
   pn           text not null default '',                     -- 도면 표기 품번(빈 값 = 위치만 표시)
   kind         text not null default '',                     -- 담당자가 고친 자재 종류(빈 값 = 마스터·추정 값)
-  src          text not null check (src in ('pdf', 'manual')),
+  src          text not null,                                -- pdf · manual · table(v0.3) — 제약은 v0.3 do 블록
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
   -- ⚠ upsert 시 onConflict: 'drawing_id,mark_key'
@@ -259,6 +263,71 @@ do $c$ begin
   end if;
 end $c$;
 
+-- ── v0.3 (2026-09-29 저녁) 고객사별 학습 규칙 · 도면 부품표 · 커넥터 부자재 ─────────
+-- kind 에 'sub'(커넥터 부자재 마스터)를 더함 — 이미 만든 표에도 적용되게 제약을 새로 건다
+do $c$ begin
+  alter table public.master_file drop constraint if exists master_file_kind_check;
+  alter table public.master_file drop constraint if exists master_file_kind_ok;
+  alter table public.master_file add constraint master_file_kind_ok check (kind in ('map', 'spec', 'sub'));
+  alter table public.column_mapping drop constraint if exists column_mapping_kind_check;
+  alter table public.column_mapping drop constraint if exists column_mapping_kind_ok;
+  alter table public.column_mapping add constraint column_mapping_kind_ok check (kind in ('map', 'spec', 'sub'));
+end $c$;
+
+-- 커넥터 부자재 마스터 행 (drawing-learn.js buildSubTable: { row, conn, kind, pn, code, qty, name })
+create table if not exists public.sub_row (
+  id              bigint generated always as identity primary key,
+  owner_id        uuid not null default auth.uid(),
+  master_file_id  bigint not null references public.master_file(id) on delete cascade,
+  row_no          int not null check (row_no > 0),
+  conn            text not null check (length(btrim(conn)) > 0),   -- 커넥터 품번(제조사 품번 또는 사내 코드)
+  sub_kind        text not null default '',                        -- 부자재 구분(터미널·와이어 실·리테이너 …)
+  pn              text not null default '',                        -- 부자재 품번
+  code            text not null default '',                        -- 부자재 사내 코드
+  qty             text not null default '',                        -- 커넥터 1개당 수량(엑셀 칸 그대로)
+  name            text not null default '',
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  constraint sub_row_has_part check (pn <> '' or code <> ''),
+  -- ⚠ upsert 시 onConflict: 'master_file_id,row_no'
+  constraint sub_row_file_row_key unique (master_file_id, row_no)
+);
+create index if not exists sub_row_conn_idx on public.sub_row (master_file_id, conn);
+
+-- 고객사별 학습 규칙 (state.profiles[]: drawing-learn.js normalizeProfile 모양)
+create table if not exists public.customer_profile (
+  id           bigint generated always as identity primary key,
+  owner_id     uuid not null default auth.uid(),
+  profile_key  text not null check (length(profile_key) > 0),        -- 도구 안의 규칙 id
+  name         text not null check (length(btrim(name)) > 0),        -- 고객사 이름(마스터 고객사 열과 같게)
+  layout       text not null default 'label' check (layout in ('label', 'table')),
+  keywords     text[] not null default '{}',                          -- 표제란 알아보기 글자
+  examples     jsonb not null default '{"mfr":[],"cust":[]}'::jsonb check (jsonb_typeof(examples) = 'object'),
+  patterns     jsonb not null default '[]'::jsonb check (jsonb_typeof(patterns) = 'array'),   -- [{re,type,auto}]
+  strict       boolean not null default false,
+  xref         jsonb not null default '[]'::jsonb check (jsonb_typeof(xref) = 'array'),       -- [{cust,mfr,code,name}]
+  table_roles  jsonb not null default '{}'::jsonb check (jsonb_typeof(table_roles) = 'object'),
+  exclude      text not null default '',
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  -- ⚠ upsert 시 onConflict: 'owner_id,profile_key'
+  constraint customer_profile_key unique (owner_id, profile_key)
+);
+
+-- 도면 표시에 부품표 칼럼(품번 종류·같은 행의 고객사 품번·수량·품명), 추출 방식에 'table'
+alter table public.drawing_mark add column if not exists pn_type text not null default '';
+alter table public.drawing_mark add column if not exists cust_pn text not null default '';
+alter table public.drawing_mark add column if not exists qty text not null default '';
+alter table public.drawing_mark add column if not exists descr text not null default '';
+alter table public.drawing_file add column if not exists profile_name text not null default '';
+do $c$ begin
+  alter table public.drawing_mark drop constraint if exists drawing_mark_src_check;
+  alter table public.drawing_mark drop constraint if exists drawing_mark_src_ok;
+  alter table public.drawing_mark add constraint drawing_mark_src_ok check (src in ('pdf', 'manual', 'table'));
+  alter table public.drawing_mark drop constraint if exists drawing_mark_pn_type_ok;
+  alter table public.drawing_mark add constraint drawing_mark_pn_type_ok check (pn_type in ('', 'mfr', 'cust'));
+end $c$;
+
 -- ----------------------------------------------------------------------------
 -- 2. 함수 — search_path 고정
 -- ----------------------------------------------------------------------------
@@ -276,7 +345,7 @@ declare t text;
 begin
   foreach t in array array['master_file', 'map_row', 'spec_row', 'column_mapping', 'harness_bom',
                            'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings',
-                           'drawing_file', 'drawing_mark', 'drawing_choice']
+                           'drawing_file', 'drawing_mark', 'drawing_choice', 'sub_row', 'customer_profile']
   loop
     execute format('drop trigger if exists %I on public.%I', t || '_updated_at', t);
     execute format('create trigger %I before update on public.%I for each row execute function public.set_updated_at()',
@@ -302,12 +371,14 @@ alter table public.bom_export_log enable row level security;
 alter table public.drawing_file   enable row level security;
 alter table public.drawing_mark   enable row level security;
 alter table public.drawing_choice enable row level security;
+alter table public.sub_row          enable row level security;
+alter table public.customer_profile enable row level security;
 
 -- 3-1. 부모 표 : 본인 행만 읽기·쓰기·수정·삭제
 do $rls$
 declare t text;
 begin
-  foreach t in array array['master_file', 'column_mapping', 'harness_bom', 'app_settings', 'drawing_file', 'drawing_choice']
+  foreach t in array array['master_file', 'column_mapping', 'harness_bom', 'app_settings', 'drawing_file', 'drawing_choice', 'customer_profile']
   loop
     execute format('drop policy if exists %I on public.%I', t || '_select', t);
     execute format('drop policy if exists %I on public.%I', t || '_insert', t);
@@ -338,7 +409,8 @@ begin
       ('bom_connector', 'exists (select 1 from public.harness_bom b where b.id = bom_id and b.owner_id = auth.uid())'),
       ('bom_circuit',   'exists (select 1 from public.harness_bom b where b.id = bom_id and b.owner_id = auth.uid())'),
       ('bom_choice',    'exists (select 1 from public.harness_bom b where b.id = bom_id and b.owner_id = auth.uid())'),
-      ('drawing_mark',  'exists (select 1 from public.drawing_file d where d.id = drawing_id and d.owner_id = auth.uid())')
+      ('drawing_mark',  'exists (select 1 from public.drawing_file d where d.id = drawing_id and d.owner_id = auth.uid())'),
+      ('sub_row',       'exists (select 1 from public.master_file f where f.id = master_file_id and f.owner_id = auth.uid() and f.kind = ''sub'')')
     ) as v(t, parent_ok)
   loop
     execute format('drop policy if exists %I on public.%I', r.t || '_select', r.t);

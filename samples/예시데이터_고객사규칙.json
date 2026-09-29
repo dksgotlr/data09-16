@@ -1,0 +1,108 @@
+{
+  "tool": "data09-16",
+  "kind": "customer-profiles",
+  "profiles": [
+    {
+      "id": "sample-a",
+      "name": "예시고객사A",
+      "keywords": [
+        "CUSTOMER: SAMPLE-A"
+      ],
+      "layout": "label",
+      "examples": {
+        "mfr": [
+          "MX-8P-040"
+        ],
+        "cust": [
+          "CA-1001",
+          "CL-2001"
+        ]
+      },
+      "patterns": [
+        {
+          "re": "^[A-Z]{2}-[0-9][A-Z]-[0-9]{3}$",
+          "type": "mfr",
+          "auto": true
+        },
+        {
+          "re": "^[A-Z]{2}-[0-9]{4}$",
+          "type": "cust",
+          "auto": true
+        }
+      ],
+      "strict": true,
+      "xref": [],
+      "table": {
+        "roles": {}
+      },
+      "exclude": "",
+      "at": ""
+    },
+    {
+      "id": "sample-b",
+      "name": "예시고객사B",
+      "keywords": [
+        "CUSTOMER: SAMPLE-B"
+      ],
+      "layout": "table",
+      "examples": {
+        "mfr": [
+          "MX-8P-040",
+          "KP-100-B"
+        ],
+        "cust": [
+          "CB-2208"
+        ]
+      },
+      "patterns": [
+        {
+          "re": "^[A-Z]{2}-[0-9][A-Z]-[0-9]{3}$",
+          "type": "mfr",
+          "auto": true
+        },
+        {
+          "re": "^[A-Z]{2}-[0-9]{3}-[A-Z]$",
+          "type": "mfr",
+          "auto": true
+        },
+        {
+          "re": "^[A-Z]{2}-[0-9]{4}$",
+          "type": "cust",
+          "auto": true
+        }
+      ],
+      "strict": false,
+      "xref": [
+        {
+          "cust": "CB-2210",
+          "mfr": "MX-2P-001",
+          "code": "",
+          "name": ""
+        },
+        {
+          "cust": "CB-3301",
+          "mfr": "VT-19-BK",
+          "code": "",
+          "name": ""
+        },
+        {
+          "cust": "CB-4410",
+          "mfr": "PR-99-01",
+          "code": "",
+          "name": "코루게이트 튜브 13파이"
+        }
+      ],
+      "table": {
+        "roles": {
+          "ITEM": "item",
+          "CUSTOMERP/N": "cust",
+          "MAKERP/N": "mfr",
+          "DESCRIPTION": "desc",
+          "Q'TY": "qty"
+        }
+      },
+      "exclude": "",
+      "at": ""
+    }
+  ]
+}

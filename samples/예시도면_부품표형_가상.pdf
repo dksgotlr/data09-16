@@ -1,0 +1,144 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 3862 >>
+stream
+0 0 0 RG 0 0 0 rg 1 J 1 j
+1.2 w 15 15 812 565 re S
+1 w 560 15 267 110 re S
+1 w 560 103 m 827 103 l S
+1 w 560 81 m 827 81 l S
+1 w 560 59 m 827 59 l S
+1 w 560 37 m 827 37 l S
+BT /F1 8 Tf 566 109 Td (TITLE: SAMPLE HARNESS B \(FICTITIOUS DATA\)) Tj ET
+BT /F1 9 Tf 566 87 Td (DWG NO. HN-25-0107) Tj ET
+BT /F1 8 Tf 566 65 Td (CUSTOMER: SAMPLE-B) Tj ET
+BT /F1 8 Tf 566 43 Td (REV 0   SCALE NTS   SHEET 1/1) Tj ET
+BT /F1 7 Tf 566 21 Td (ALL PART NUMBERS ARE FICTITIOUS) Tj ET
+BT /F1 11 Tf 30 555 Td (WIRING HARNESS - TABLE STYLE SAMPLE \(PARTS LIST ON SHEET\)) Tj ET
+BT /F1 9 Tf 440 537 Td (PARTS LIST) Tj ET
+1 w 434 387 377 144 re S
+BT /F1 7.5 Tf 440 520 Td (ITEM) Tj ET
+BT /F1 7.5 Tf 474 520 Td (CUSTOMER P/N) Tj ET
+BT /F1 7.5 Tf 552 520 Td (MAKER P/N) Tj ET
+BT /F1 7.5 Tf 632 520 Td (DESCRIPTION) Tj ET
+BT /F1 7.5 Tf 760 520 Td (Q'TY) Tj ET
+1 w 434 515 m 811 515 l S
+BT /F1 7.5 Tf 440 504 Td (1) Tj ET
+BT /F1 7.5 Tf 474 504 Td (CB-2208) Tj ET
+BT /F1 7.5 Tf 552 504 Td (MX-8P-040) Tj ET
+BT /F1 7.5 Tf 632 504 Td (8P CONNECTOR) Tj ET
+BT /F1 7.5 Tf 760 504 Td (1) Tj ET
+0.5 w 434 499 m 811 499 l S
+BT /F1 7.5 Tf 440 488 Td (2) Tj ET
+BT /F1 7.5 Tf 474 488 Td (CB-2210) Tj ET
+BT /F1 7.5 Tf 552 488 Td (-) Tj ET
+BT /F1 7.5 Tf 632 488 Td (2P CONNECTOR) Tj ET
+BT /F1 7.5 Tf 760 488 Td (2) Tj ET
+0.5 w 434 483 m 811 483 l S
+BT /F1 7.5 Tf 440 472 Td (3) Tj ET
+BT /F1 7.5 Tf 474 472 Td (GR-3001) Tj ET
+BT /F1 7.5 Tf 552 472 Td (-) Tj ET
+BT /F1 7.5 Tf 632 472 Td (GROMMET) Tj ET
+BT /F1 7.5 Tf 760 472 Td (1) Tj ET
+0.5 w 434 467 m 811 467 l S
+BT /F1 7.5 Tf 440 456 Td (4) Tj ET
+BT /F1 7.5 Tf 474 456 Td (CB-2299) Tj ET
+BT /F1 7.5 Tf 552 456 Td (-) Tj ET
+BT /F1 7.5 Tf 632 456 Td (4P CONNECTOR) Tj ET
+BT /F1 7.5 Tf 760 456 Td (1) Tj ET
+0.5 w 434 451 m 811 451 l S
+BT /F1 7.5 Tf 440 440 Td (5) Tj ET
+BT /F1 7.5 Tf 474 440 Td (-) Tj ET
+BT /F1 7.5 Tf 552 440 Td (KP-100-B) Tj ET
+BT /F1 7.5 Tf 632 440 Td (CLIP) Tj ET
+BT /F1 7.5 Tf 760 440 Td (4) Tj ET
+0.5 w 434 435 m 811 435 l S
+BT /F1 7.5 Tf 440 424 Td (6) Tj ET
+BT /F1 7.5 Tf 474 424 Td (-) Tj ET
+BT /F1 7.5 Tf 552 424 Td (MX-9P-900) Tj ET
+BT /F1 7.5 Tf 632 424 Td (9P CONNECTOR) Tj ET
+BT /F1 7.5 Tf 760 424 Td (1) Tj ET
+0.5 w 434 419 m 811 419 l S
+BT /F1 7.5 Tf 440 408 Td (7) Tj ET
+BT /F1 7.5 Tf 474 408 Td (CB-3301) Tj ET
+BT /F1 7.5 Tf 552 408 Td (-) Tj ET
+BT /F1 7.5 Tf 632 408 Td (VINYL TAPE) Tj ET
+BT /F1 7.5 Tf 760 408 Td (2) Tj ET
+0.5 w 434 403 m 811 403 l S
+BT /F1 7.5 Tf 440 392 Td (8) Tj ET
+BT /F1 7.5 Tf 474 392 Td (CB-4410) Tj ET
+BT /F1 7.5 Tf 552 392 Td (-) Tj ET
+BT /F1 7.5 Tf 632 392 Td (CORRUGATE TUBE) Tj ET
+BT /F1 7.5 Tf 760 392 Td (1) Tj ET
+0.5 w 469 531 m 469 387 l S
+0.5 w 547 531 m 547 387 l S
+0.5 w 627 531 m 627 387 l S
+0.5 w 755 531 m 755 387 l S
+3 w 90 265 m 520 265 l S
+2 w 180 265 m 180 315 l S
+2 w 300 265 m 300 175 l S
+2 w 420 265 m 420 315 l S
+1.2 w 46 250 44 30 re S
+BT /F1 8 Tf 58 261 Td (CN1) Tj ET
+0.8 w 91 279 14 14 re S
+BT /F1 7 Tf 95.5 283 Td (1) Tj ET
+1.2 w 158 315 44 30 re S
+BT /F1 8 Tf 170 326 Td (CN2) Tj ET
+0.8 w 203 344 14 14 re S
+BT /F1 7 Tf 207.5 348 Td (2) Tj ET
+1.2 w 278 145 44 30 re S
+BT /F1 8 Tf 290 156 Td (CN3) Tj ET
+0.8 w 323 174 14 14 re S
+BT /F1 7 Tf 327.5 178 Td (2) Tj ET
+1.2 w 398 315 44 30 re S
+BT /F1 8 Tf 410 326 Td (CN4) Tj ET
+0.8 w 443 344 14 14 re S
+BT /F1 7 Tf 447.5 348 Td (4) Tj ET
+1.2 w 520 250 44 30 re S
+BT /F1 8 Tf 532 261 Td (CN5) Tj ET
+0.8 w 565 279 14 14 re S
+BT /F1 7 Tf 569.5 283 Td (6) Tj ET
+0.8 w 233 272 14 14 re S
+BT /F1 7 Tf 237.5 276 Td (5) Tj ET
+0.8 w 353 272 14 14 re S
+BT /F1 7 Tf 357.5 276 Td (5) Tj ET
+0.8 w 293 238 14 14 re S
+BT /F1 7 Tf 297.5 242 Td (3) Tj ET
+0.8 w 463 242 14 14 re S
+BT /F1 7 Tf 467.5 246 Td (7) Tj ET
+0.8 w 113 242 14 14 re S
+BT /F1 7 Tf 117.5 246 Td (8) Tj ET
+BT /F1 7 Tf 200 295 Td (0.5SQ) Tj ET
+BT /F1 7 Tf 430 295 Td (0.85SQ) Tj ET
+BT /F1 7 Tf 30 125 Td (NOTE 1. PART NUMBERS ARE LISTED IN THE PARTS LIST ONLY) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Title (Sample harness drawing B table style - fictitious) /Producer (data09-16 make-sample-drawing.js) >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000338 00000 n 
+0000004252 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R /Info 6 0 R >>
+startxref
+4377
+%%EOF

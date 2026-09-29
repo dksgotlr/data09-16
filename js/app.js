@@ -1,7 +1,7 @@
 /* 하네스 BOM 산출 — 화면 (1단계). 로직은 js/logic.js(BomLogic) */
 (function () {
   'use strict';
-  var L = window.BomLogic, S = window.BomSample, Store = window.BomStore, DL = window.DrawLogic;
+  var L = window.BomLogic, S = window.BomSample, Store = window.BomStore, DL = window.DrawLogic, LR = window.DrawLearn;
   var main = document.getElementById('main');
 
   // ── 상태 ──────────────────────────────────────────────────────
@@ -9,11 +9,12 @@
     return { header: { drawingNo: '', drawingName: '', rev: '', customer: '', bomType: '신규' }, connectors: [], circuits: [] };
   }
   function emptyDrawing() {
-    return { fileName: '', type: '', unit: 'pt', pages: [], info: { drawingNo: '', customer: '' }, marks: [], queue: [], sample: false, nextId: 1 };
+    // profileId: 적용한 고객사 규칙(빈 값 = 없음), profileAuto: 표제란 글자로 저절로 고른 것인지, table: 도면 표 영역·열 역할
+    return { fileName: '', type: '', unit: 'pt', pages: [], info: { drawingNo: '', customer: '' }, marks: [], queue: [], sample: false, nextId: 1, profileId: '', profileAuto: false, table: null };
   }
   function emptyState() {
-    return { masters: { map: null, spec: null }, parts: emptyParts(), settings: L.mergeSettings(null), choices: {}, sample: {},
-      drawing: emptyDrawing(), drawChoices: {}, drawSettings: DL.mergeDrawSettings(null) };
+    return { masters: { map: null, spec: null, sub: null }, parts: emptyParts(), settings: L.mergeSettings(null), choices: {}, sample: {},
+      drawing: emptyDrawing(), drawChoices: {}, drawSettings: DL.mergeDrawSettings(null), profiles: [], drawSubOff: {} };
   }
   var state = (function () {
     var s = Store.load(), d = emptyState();
@@ -28,6 +29,9 @@
     d.drawing.info = Object.assign(emptyDrawing().info, d.drawing.info || {});
     d.drawChoices = s.drawChoices || {};
     d.drawSettings = DL.mergeDrawSettings(s.drawSettings);
+    d.masters.sub = d.masters.sub || null;
+    d.profiles = (Array.isArray(s.profiles) ? s.profiles : []).map(LR.normalizeProfile);
+    d.drawSubOff = s.drawSubOff || {};
     return d;
   })();
   var pending = null;         // 열 매핑 중인 파일(저장 안 함)
@@ -36,7 +40,7 @@
   function save() {
     var ok = Store.save(state);
     document.getElementById('storageBanner').hidden = ok && Store.available();
-    document.getElementById('sampleBanner').hidden = !(state.sample.map || state.sample.spec || state.sample.parts || state.drawing.sample);
+    document.getElementById('sampleBanner').hidden = !(state.sample.map || state.sample.spec || state.sample.sub || state.sample.parts || state.drawing.sample);
   }
 
   // ── 도우미 ────────────────────────────────────────────────────
@@ -117,7 +121,7 @@
       fr.readAsArrayBuffer(file);
     });
   }
-  function fieldsOf(kind) { return kind === 'map' ? L.MAP_FIELDS : L.SPEC_FIELDS; }
+  function fieldsOf(kind) { return kind === 'map' ? L.MAP_FIELDS : kind === 'sub' ? LR.SUB_FIELDS : L.SPEC_FIELDS; }
   function startPending(kind, fileName, wb) {
     var first = wb.names.filter(function (n) { return wb.sheets[n].length; })[0] || wb.names[0];
     pending = { kind: kind, fileName: fileName, names: wb.names, sheets: wb.sheets, sheet: first };
@@ -131,6 +135,7 @@
   }
   function buildPending() {
     var aoa = pending.sheets[pending.sheet] || [];
+    if (pending.kind === 'sub') return LR.buildSubTable(aoa, pending.headerRow, pending.mapping);
     return pending.kind === 'map'
       ? L.buildMapTable(aoa, pending.headerRow, pending.mapping)
       : L.buildSpecTable(aoa, pending.headerRow, pending.mapping, state.settings.multiSep);
@@ -168,7 +173,7 @@
     state.masters.spec = build('spec', S.specAoa);
     state.parts = S.build();
     state.choices = {};
-    state.sample = { map: true, spec: true, parts: true };
+    state.sample = { map: true, spec: true, parts: true, sub: !!state.sample.sub };
     pending = null;
     save();
   }
@@ -199,7 +204,8 @@
           h('a', { href: 'samples/예시데이터_부품LIST_커넥터.csv', text: '부품LIST_커넥터.csv' }), ' · ',
           h('a', { href: 'samples/예시데이터_부품LIST_회로.csv', text: '부품LIST_회로.csv' }))));
     }
-    wrap.push(h('div', { class: 'grid-2' }, masterCard('map'), masterCard('spec')));
+    wrap.push(h('div', { class: 'grid-2' }, masterCard('map'), masterCard('sub')));
+    wrap.push(h('div', { class: 'grid-2' }, masterCard('spec')));
     if (state.masters.map) {
       wrap.push(h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/drawing', text: '다음: 2. 도면 자재 판별' }),
         state.masters.spec ? h('a', { class: 'btn', href: '#/parts', text: 'BOM 산출(다음 단계): B1. 부품 LIST' }) : null));
@@ -209,10 +215,12 @@
 
   function masterCard(kind) {
     var m = state.masters[kind];
-    var title = kind === 'map' ? '부품 매핑 마스터' : 'Application Spec';
+    var title = kind === 'map' ? '부품 매핑 마스터' : kind === 'sub' ? '커넥터 부자재 마스터' : 'Application Spec';
     var desc = kind === 'map'
       ? '통합 자재 마스터 — 부품 분류 · 사내 자재 코드 · 제조사 품번 · 고객사별 품번. 도면 자재 판별과 BOM 산출에 함께 씁니다'
-      : '커넥터 품번별 적용 터미널·와이어 실·전선 규격 범위(방수전이 있으면 함께). BOM 산출(다음 단계)에만 씁니다';
+      : kind === 'sub'
+        ? '사내 DB 에서 커넥터를 검색하면 함께 나오는 부자재 목록(커넥터 품번 · 부자재 구분 · 부자재 품번 · 사내 코드 · 1개당 수량). 도면 자재 판별에서 커넥터를 고르면 이 부자재가 자재 목록에 펼쳐집니다(선택)'
+        : '커넥터 품번별 적용 터미널·와이어 실·전선 규격 범위(방수전이 있으면 함께). BOM 산출(다음 단계)에만 씁니다';
     var card = h('section', { class: 'card', 'aria-label': title });
     append(card, h('h2', null, title, ' ', m ? badge(state.sample[kind] ? '예시 데이터' : '불러옴', state.sample[kind] ? 'warn' : 'ok') : badge('아직 없음', 'bad')));
     append(card, h('p', { class: 'muted small', text: desc }));
@@ -247,7 +255,10 @@
 
   function masterPreview(kind, rows, total) {
     var head, body;
-    if (kind === 'map') {
+    if (kind === 'sub') {
+      head = ['행', '커넥터 품번', '부자재 구분', '부자재 품번', '사내 코드', '1개당 수량', '품명'];
+      body = rows.map(function (r) { return h('tr', null, h('td', { class: 'num', text: r.row }), h('td', { class: 'pn', text: r.conn }), h('td', { text: r.kind }), h('td', { class: 'pn', text: r.pn }), h('td', { class: 'pn', text: r.code }), h('td', { class: 'num', text: r.qty }), h('td', { text: r.name })); });
+    } else if (kind === 'map') {
       head = ['행', '고객사 품번', '제조사 품번', '사내 자재 코드', '품명', '구분', '고객사'];
       body = rows.map(function (r) { return h('tr', null, h('td', { class: 'num', text: r.row }), h('td', { class: 'pn', text: r.cust }), h('td', { class: 'pn', text: r.mfr }), h('td', { class: 'pn', text: r.code }), h('td', { text: r.name }), h('td', { text: r.kind }), h('td', { text: r.customer })); });
     } else {

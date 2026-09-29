@@ -287,19 +287,21 @@ test('예시 통합 자재 마스터: 열 자동 연결로 11행, 부품 분류�
   const r = DM.find(x => x.cust === 'GR-3001');
   assert.equal(r.kind, '그로멧'); assert.equal(r.customer, '예시고객사B'); assert.equal(r.code, 'RM-G0001');
 });
-test('기존: 고객사 품번 일치 → 사내 코드·종류', () => {
+// 2026-09-29 저녁 수강생 답: 노랑 = 도면에 제조사 품번이 아닌 고객사 품번이 적힌 경우 → status 'customer'
+test('노랑(고객사 품번): 고객사 품번 일치 → 매핑된 사내 코드·제조사 품번·종류', () => {
   const r = cls('CA-1001');
-  assert.equal(r.status, 'existing'); assert.equal(r.reason, 'cust_exact'); assert.equal(r.code, 'RM-C0001'); assert.equal(r.kind, '커넥터');
+  assert.equal(r.status, 'customer'); assert.equal(r.isCust, true); assert.equal(r.reason, 'cust_exact');
+  assert.equal(r.code, 'RM-C0001'); assert.equal(r.mfr, 'MX-2P-001'); assert.equal(r.kind, '커넥터');
 });
-test('기존: 하이픈 빠진 CA1002 는 표기 차이로 일치', () => {
+test('노랑(고객사 품번): 하이픈 빠진 CA1002 는 표기 차이로 매핑', () => {
   const r = cls('CA1002');
-  assert.equal(r.status, 'existing'); assert.equal(r.reason, 'cust_norm'); assert.equal(r.code, 'RM-C0002');
+  assert.equal(r.status, 'customer'); assert.equal(r.reason, 'cust_norm'); assert.equal(r.code, 'RM-C0002');
 });
-test('기존: 도면에 제조사 품번(다른 고객사 행이어도) → 제조사 품번으로 일치', () => {
+test('초록(기존): 도면에 제조사 품번(다른 고객사 행이어도) → 제조사 품번으로 일치 — 수강생 확인', () => {
   const r = cls('MX-8P-040');
-  assert.equal(r.status, 'existing'); assert.equal(r.reason, 'mfr'); assert.equal(r.code, 'RM-C0006');
+  assert.equal(r.status, 'existing'); assert.equal(r.reason, 'mfr'); assert.equal(r.code, 'RM-C0006'); assert.equal(r.isCust, false);
 });
-test('매핑 필요: 제조사 후보 2개 · 사내 코드 빈칸 · 다른 고객사 품번 · 헷갈리는 글자', () => {
+test('확인 필요: 제조사 후보 2개 · 사내 코드 빈칸 · 다른 고객사 품번 · 헷갈리는 글자', () => {
   const a = cls('CA-1004');
   assert.equal(a.status, 'mapping'); assert.equal(a.reason, 'map_multi'); assert.equal(a.candidates.length, 2);
   const b = cls('PT-5001');
@@ -309,9 +311,9 @@ test('매핑 필요: 제조사 후보 2개 · 사내 코드 빈칸 · 다른 고
   const d = cls('CL-2O02');
   assert.equal(d.status, 'mapping'); assert.equal(d.reason, 'similar'); assert.equal(d.candidates[0].code, 'RM-K0002');
 });
-test('고객사를 비우면 GR-3001 은 고객사 구분 없이 기존', () => {
+test('고객사를 비우면 GR-3001 은 고객사 구분 없이 고객사 품번으로 매핑', () => {
   const r = DL.classifyPart('GR-3001', DM, {});
-  assert.equal(r.status, 'existing'); assert.equal(r.code, 'RM-G0001');
+  assert.equal(r.status, 'customer'); assert.equal(r.code, 'RM-G0001');
 });
 test('신규: 마스터에도 비슷한 품번도 없음 → 종류는 앞머리로 추정', () => {
   const a = cls('CA-1099');
@@ -324,9 +326,9 @@ test('유사 품번 찾기를 끄면(글자 차이 0·헷갈리는 글자 끔) C
   assert.equal(cls('CL-2O02', { settings: { fuzzy: 0, confusable: false } }).status, 'new');
   assert.equal(cls('CL-2003').status, 'mapping');   // 한 글자 차이(CL-2001·CL-2002) → 비슷한 품번
 });
-test('담당자 처리: 후보 선택 → 기존(확정), 직접 입력, 신규 확정, 없는 후보 id 는 무시', () => {
+test('담당자 처리: 후보 선택(고객사 품번이라 확정 뒤에도 노랑), 직접 입력, 신규 확정, 없는 후보 id 는 무시', () => {
   const a = cls('CA-1004', { choice: { pick: 'MX-3P-031|RM-C0005' } });
-  assert.equal(a.status, 'existing'); assert.equal(a.confirmed, true); assert.equal(a.code, 'RM-C0005');
+  assert.equal(a.status, 'customer'); assert.equal(a.confirmed, true); assert.equal(a.code, 'RM-C0005');
   const b = cls('TP-0019', { choice: { code: 'RM-A0099', name: '테이프' } });
   assert.equal(b.status, 'existing'); assert.equal(b.code, 'RM-A0099'); assert.equal(b.reason, 'manual');
   const c = cls('CA-1099', { choice: { isNew: true } });
@@ -369,8 +371,9 @@ console.log('\n도면 자재 판별 — 예시 도면 PDF 전체 흐름 (vendor/
       assert.ok(m.w > 30 && m.w < 40, 'w ' + m.w);
     });
     const res = DL.classifyMarks({ marks, mapRows: DM, customer: DS.customer });
-    test('판별 집계: 기존 7 · 매핑 필요 4 · 신규 4 · 미입력 0', () => {
-      assert.deepEqual(res.count, { existing: 7, mapping: 4, 'new': 4, empty: 0 });
+    test('판별 집계(규칙 없이): 기존 1 · 고객사 품번 6 · 확인 필요 4 · 신규 4 · 미입력 0', () => {
+      assert.deepEqual(res.count, { existing: 1, customer: 6, mapping: 4, 'new': 4, empty: 0 });
+      assert.equal(res.open, 8);
     });
     test('제외 목록에 도면 번호를 넣으면 다시 추출할 때 14개', () => {
       const c = DL.extractCandidates(items, { index: DL.buildMasterIndex(DM), settings: { exclude: 'HN-24-*' } });
@@ -389,12 +392,15 @@ console.log('\n도면 자재 판별 — 예시 도면 PDF 전체 흐름 (vendor/
       assert.deepEqual(sh['자재 판별'][0].slice(1, 5), ['자재 종류', '도면 표기 품번', '매핑된 사내 자재 코드', '신규 여부']);
       assert.equal(sh['자재 판별'].length, 16);
       const row = sh['자재 판별'].find(r => r[2] === 'CA-1003');
-      assert.equal(row[1], '커넥터'); assert.equal(row[3], 'RM-C0003'); assert.equal(row[4], '기존 자재'); assert.equal(row[9], 1); assert.equal(row[14], 'pt');
+      assert.equal(row[1], '커넥터'); assert.equal(row[3], 'RM-C0003'); assert.equal(row[4], '고객사 품번(매핑됨)'); assert.equal(row[9], 1); assert.equal(row[14], 'pt');
+      assert.deepEqual(sh['자재 판별'][0].slice(16), ['도면 품번 구분', '고객사 품번', '수량', '적용 고객사 규칙']);
+      assert.deepEqual(row.slice(16, 19), ['고객사 품번', 'CA-1003', 1]);
+      assert.equal(sh['자재 판별'].find(r => r[2] === 'MX-8P-040')[16], '제조사 품번');
       const nw = sh['자재 판별'].find(r => r[2] === 'CL-7788');
       assert.equal(nw[1], '클립(추정)'); assert.equal(nw[4], '신규 자재'); assert.equal(nw[3], '');
       assert.equal(sh['품번별 요약'].length, 14);                 // 서로 다른 품번 13 + 머리
       assert.equal(sh['확인 필요'].length, 9);                   // 매핑 필요 4 + 미확정 신규 4 + 머리
-      assert.deepEqual(sh['도면 정보'].slice(-4).map(r => r[1]), [7, 4, 4, 0]);
+      assert.deepEqual(sh['도면 정보'].slice(-5).map(r => r[1]), [1, 6, 4, 4, 0]);
     });
   }
 }
@@ -409,5 +415,174 @@ test('누른 자리 기본 상자: 쪽 폭 7%·2%, 가장자리에서는 쪽 안
 test('품번 목록 붙여넣기: 번호·기호 떼고, 빈 줄 무시, 탭 뒤는 버림, [?] 표시 뗌', () => {
   assert.deepEqual(DL.parsePnList('1. CA-1001\n- CL-2001\n\nGR-3001\t그로멧\nCL-2O02 [?]'), ['CA-1001', 'CL-2001', 'GR-3001', 'CL-2O02']);
 });
+
+// ── 2026-09-29 저녁: 고객사별 학습 규칙 · 도면 부품표 · 커넥터 부자재 (js/drawing-learn.js) ─────────
+const LR = require('../js/drawing-learn.js');
+const PROFS = () => DS.profiles.map(p => LR.normalizeProfile(JSON.parse(JSON.stringify(p))));
+const PA = () => PROFS()[0], PB = () => PROFS()[1];
+
+console.log('\n고객사별 학습 규칙 — 예시로 규칙 만들기');
+test('품번 모양 짐작: 같은 모양은 길이 범위로 묶고, 다른 모양은 따로', () => {
+  assert.deepEqual(LR.inferPatterns(['CA-1001', 'CL-20015']), ['^[A-Z]{2}-[0-9]{4,5}$']);
+  assert.deepEqual(LR.inferPatterns(['MX-8P-040']), ['^[A-Z]{2}-[0-9][A-Z]-[0-9]{3}$']);
+  assert.deepEqual(LR.inferPatterns(['MX-8P-040', 'KP-100-B']), ['^[A-Z]{2}-[0-9][A-Z]-[0-9]{3}$', '^[A-Z]{2}-[0-9]{3}-[A-Z]$']);
+  assert.deepEqual(LR.inferPatterns(['A.12/3']), ['^[A-Z]\\.[0-9]{2}\\/[0-9]$']);
+});
+test('예시 가르치기: 고객사→제조사로 옮기면 반대쪽에서 빠지고, 직접 적은 식은 남음', () => {
+  const p = LR.newProfile('X');
+  p.patterns.push({ re: '^Z[0-9]+$', type: 'cust', auto: false });
+  LR.learnExample(p, 'CA-1001', 'cust');
+  assert.deepEqual(p.patterns.map(x => x.re), ['^Z[0-9]+$', '^[A-Z]{2}-[0-9]{4}$']);
+  LR.learnExample(p, 'CA-1001', 'mfr');
+  assert.deepEqual(p.examples, { mfr: ['CA-1001'], cust: [] });
+  assert.deepEqual(p.patterns.map(x => x.type), ['cust', 'mfr']);
+  LR.learnExample(p, 'SAMPLE-X', 'keyword'); LR.learnExample(p, 'SAMPLE-X', 'keyword');
+  LR.learnExample(p, 'HN-24-0001', 'notpn');
+  assert.deepEqual(p.keywords, ['SAMPLE-X']); assert.equal(p.exclude, 'HN-24-0001');
+  LR.forgetExample(p, 'CA-1001', 'mfr');
+  assert.deepEqual(p.patterns.map(x => x.re), ['^Z[0-9]+$']);
+});
+test('저장값 정리: 잘못된 정규식·빈 대조표 행은 버리고 머리글 열쇠는 공백 없이 대문자', () => {
+  const p = LR.normalizeProfile({ name: ' B ', patterns: [{ re: '[', type: 'cust' }, { re: '^A$', type: 'x' }], xref: [{ cust: '' }, { cust: 'C1', mfr: 'M1' }], table: { roles: { 'Maker P/N': 'mfr', 'x': 'nope' } }, layout: 'weird' });
+  assert.equal(p.name, 'B'); assert.equal(p.layout, 'label');
+  assert.deepEqual(p.patterns, [{ re: '^A$', type: 'mfr', auto: false }]);
+  assert.equal(p.xref.length, 1); assert.deepEqual(p.table.roles, { 'MAKERP/N': 'mfr' });
+});
+test('고객사 알아보기: 표제란 글자가 가장 많이 맞는 규칙, 없으면 null, 같은 수면 tie', () => {
+  const ps = PROFS();
+  assert.equal(LR.detectProfile(['DWG NO. X', 'CUSTOMER: SAMPLE-B'], ps).profile.id, 'sample-b');
+  assert.equal(LR.detectProfile(['CUSTOMER:', 'SAMPLE-A'], ps).profile.id, 'sample-a');   // 조각나도 이어 붙여 봄
+  assert.equal(LR.detectProfile(['CUSTOMER: OTHER'], ps), null);
+  const t = LR.detectProfile(['K1 K2'], [{ id: 'a', keywords: ['K1'] }, { id: 'b', keywords: ['K2'] }]);
+  assert.equal(t.tie, true);
+});
+test('학습한 모양: 숫자 사이 헷갈리는 글자(CL-2O02)도 고객사 품번 모양으로 봄, 도면 번호는 모양 밖', () => {
+  const c = DL.compileProfile(PA());
+  assert.equal(DL.patternType('CL-2O02', c), 'cust');
+  assert.equal(DL.patternType('MX-8P-040', c), 'mfr');
+  assert.equal(DL.patternType('HN-24-0001', c), '');
+  assert.equal(DL.candidateCheck('HN-24-0001', {}, null, undefined, c).why, 'not_learned');   // 「모양에 맞는 것만」 켬
+  assert.equal(DL.candidateCheck('PT-5001', {}, null, undefined, c).pnType, 'cust');
+});
+test('같은 모양을 제조사·고객사 둘 다로 가르치면 모양으로는 구분하지 않음(충돌 알림)', () => {
+  const p = PA();
+  LR.learnExample(p, 'CA-1099', 'mfr');                     // 고객사 품번 모양과 같은 모양을 제조사 예로
+  assert.deepEqual(LR.patternConflicts(p), ['^[A-Z]{2}-[0-9]{4}$']);
+  assert.equal(DL.patternType('CL-7788', DL.compileProfile(p)), '');
+  assert.equal(DL.patternType('MX-8P-040', DL.compileProfile(p)), 'mfr');
+  assert.equal(DL.candidateCheck('CL-7788', {}, null, undefined, DL.compileProfile(p)).ok, true);   // 모양에는 맞으니 후보에서 빠지지 않음
+});
+
+console.log('\n고객사 품번 → 제조사 품번 대조표 · 판별');
+test('대조표로 고객사 품번 매핑(노랑), 제조사 품번이 마스터에 없으면 신규, 대조표에도 없으면 노랑(매핑 없음)', () => {
+  const b = PB(), o = { customer: DS.customerB, profile: b };
+  const a = DL.classifyPart('CB-2210', DM, o);
+  assert.equal(a.status, 'customer'); assert.equal(a.reason, 'xref'); assert.equal(a.mfr, 'MX-2P-001'); assert.equal(a.code, 'RM-C0001');
+  const n = DL.classifyPart('CB-4410', DM, o);
+  assert.equal(n.status, 'new'); assert.equal(n.reason, 'xref_new'); assert.equal(n.mfr, 'PR-99-01'); assert.equal(n.isCust, true);
+  const u = DL.classifyPart('CB-2299', DM, Object.assign({ pnType: 'cust' }, o));
+  assert.equal(u.status, 'customer'); assert.equal(u.reason, 'cust_unmapped'); assert.equal(u.code, '');
+  assert.equal(DL.isOpen(u), true); assert.equal(DL.isOpen(a), false);
+  const r = DL.classifyPart('CB-2299', DM, Object.assign({ pnType: 'cust', settings: { unmappedCust: 'new' } }, o));
+  assert.equal(r.status, 'new'); assert.equal(r.isCust, true);
+});
+test('도면 표의 제조사 품번 열로 온 품번은 제조사 품번으로 먼저 찾음(초록)', () => {
+  const r = DL.classifyPart('MX-8P-040', DM, { customer: DS.customerB, pnType: 'mfr' });
+  assert.equal(r.status, 'existing'); assert.equal(r.by, 'mfr');
+});
+test('직접 입력: 고객사 품번이면 확정 뒤에도 노랑(매핑됨), 대조표 합치기는 같은 고객사 품번을 바꿈', () => {
+  const r = DL.classifyPart('CB-2299', DM, { customer: DS.customerB, pnType: 'cust', choice: { code: 'RM-C0099', mfr: 'MX-4P-099' } });
+  assert.equal(r.status, 'customer'); assert.equal(r.code, 'RM-C0099'); assert.equal(r.confirmed, true);
+  const x = LR.mergeXref([{ cust: 'CB-1', mfr: 'A' }, { cust: 'CB-2', mfr: 'B' }], [{ cust: 'cb1', mfr: 'C' }]);
+  assert.deepEqual(x.map(v => v.mfr), ['C', 'B']);
+});
+test('대조표 파일 읽기: 머리글로 열 찾기, 머리글 없으면 앞 두 열', () => {
+  assert.equal(LR.parseXref(DS.xrefAoa).length, 3);
+  assert.deepEqual(LR.parseXref([['CB-9', 'MX-9'], ['CB-8', '']]), [{ cust: 'CB-9', mfr: 'MX-9', code: '', name: '' }]);
+  assert.deepEqual(LR.parseXref([['메모', 'x'], ['Customer P/N', 'Maker P/N'], ['C1', 'M1']]).map(v => v.mfr), ['M1']);
+});
+
+console.log('\n도면 부품표 · 커넥터 부자재');
+test('머리글 역할 짐작: 영문·한글 머리글, 저장된 역할이 먼저', () => {
+  assert.deepEqual(LR.guessRoles(['ITEM', 'CUSTOMER P/N', 'MAKER P/N', 'DESCRIPTION', "Q'TY"]), ['item', 'cust', 'mfr', 'desc', 'qty']);
+  assert.deepEqual(LR.guessRoles(['번호', '고객사 품번', '제조사 품번', '품명', '수량']), ['item', 'cust', 'mfr', 'desc', 'qty']);
+  assert.deepEqual(LR.guessRoles(['PART NO', 'NAME']), ['pn', 'desc']);
+  assert.deepEqual(LR.guessRoles(['PART NO'], { PARTNO: 'mfr' }), ['mfr']);
+});
+{
+  const fs = require('fs');
+  const items = async (file) => {
+    globalThis.pdfjsWorker = require('../vendor/pdfjs/pdf.worker.min.js');
+    const lib = require('../vendor/pdfjs/pdf.min.js');
+    const doc = await lib.getDocument({ data: new Uint8Array(fs.readFileSync(new URL('../samples/' + file, import.meta.url))), isEvalSupported: false, verbosity: 0 }).promise;
+    const page = await doc.getPage(1), vp = page.getViewport({ scale: 1 }), tc = await page.getTextContent();
+    return tc.items.filter(it => it.str.trim()).map(it => {
+      const tx = lib.Util.transform(vp.transform, it.transform), fh = Math.hypot(tx[2], tx[3]);
+      return { page: 1, str: it.str, x: tx[4], y: tx[5] - fh, w: it.width, h: fh };
+    });
+  };
+  let A = null, Bi = null;
+  try { A = await items('예시도면_하네스_가상.pdf'); Bi = await items('예시도면_부품표형_가상.pdf'); }
+  catch (e) { console.error('  FAIL pdf.js 로 예시 PDF 2장 읽기\n       ' + e.message); process.exitCode = 1; }
+  const subRows = LR.buildSubTable(DS.subAoa, 1, L.guessMapping(DS.subAoa[1], LR.SUB_FIELDS)).rows;
+  if (A && Bi) {
+    const ids = (m) => m.map((x, i) => Object.assign({ id: 'm' + i }, x));
+    test('예시 A 에 규칙 A 적용: 표제란으로 알아보고, 도면 번호는 빠져 14개, 모르는 고객사 품번은 노랑(매핑 없음)', () => {
+      assert.equal(LR.detectProfile(A.map(x => x.str), PROFS()).profile.id, 'sample-a');
+      const marks = ids(DL.extractCandidates(A, { index: DL.buildMasterIndex(DM), profile: PA() }));
+      assert.equal(marks.length, 14);
+      assert.ok(!marks.some(m => m.pn === 'HN-24-0001'));
+      const res = DL.classifyMarks({ marks, mapRows: DM, customer: DS.customer, profile: PA() });
+      assert.deepEqual(res.count, { existing: 1, customer: 9, mapping: 4, 'new': 0, empty: 0 });
+      assert.equal(res.rows.find(r => r.pn === 'CA-1099').reason, 'cust_unmapped');
+      assert.equal(res.rows.find(r => r.pn === 'CL-2O02').reason, 'similar');
+    });
+    const b = PB();
+    const tb = LR.parseTable(Bi, { page: 1, headerHints: LR.headerHints(b), saved: b.table.roles });
+    test('예시 B: 표제란으로 규칙 B, 부품표 머리글 5칸·8행, 열 역할', () => {
+      assert.equal(LR.detectProfile(Bi.map(x => x.str), PROFS()).profile.id, 'sample-b');
+      assert.deepEqual(tb.header.map(x => x.text), ['ITEM', 'CUSTOMER P/N', 'MAKER P/N', 'DESCRIPTION', "Q'TY"]);
+      assert.equal(tb.rows.length, 8);
+      assert.deepEqual(tb.rows[3].cells.map(c => c && c.text), ['4', 'CB-2299', '-', '4P CONNECTOR', '1']);
+    });
+    test('규칙 없이도 머리글 이름으로 같은 표를 찾고, 영역을 지정해도 같은 8행', () => {
+      const t0 = LR.parseTable(Bi, { page: 1 });
+      assert.equal(t0.rows.length, 8);
+      const t1 = LR.parseTable(Bi, { page: 1, region: { x: 425, y: 60, w: 400, h: 150 } });
+      assert.equal(t1.rows.length, 8); assert.equal(t1.header.length, 5);
+      assert.equal(LR.parseTable(Bi, { page: 1, region: { x: 0, y: 560, w: 50, h: 20 } }), null);
+    });
+    const roles = LR.guessRoles(tb.header.map(x => x.text), b.table.roles);
+    const bm = ids(LR.tableMarks(tb, roles));
+    const resB = DL.classifyMarks({ marks: bm, mapRows: DM, customer: DS.customerB, profile: b });
+    test('부품표 → 표시: 제조사 품번 칸이 있으면 그것(초록), 없으면 고객사 품번(노랑), 좌표는 그 칸', () => {
+      assert.deepEqual(bm.map(m => m.pn), ['MX-8P-040', 'CB-2210', 'GR-3001', 'CB-2299', 'KP-100-B', 'MX-9P-900', 'CB-3301', 'CB-4410']);
+      assert.deepEqual(bm.map(m => m.pnType).join(''), 'mfrcustcustcustmfrmfrcustcust');
+      assert.equal(bm[0].custPn, 'CB-2208'); assert.equal(bm[1].qty, '2');
+      assert.ok(Math.abs(bm[0].x - 552) < 0.5 && bm[0].src === 'table');
+      assert.deepEqual(resB.count, { existing: 2, customer: 4, mapping: 0, 'new': 2, empty: 0 });
+      assert.equal(resB.rows.map(r => r.status[0]).join(''), 'ecccencn');
+    });
+    test('엑셀 시트: 부품표 수량은 수량 열·품번별 합계로, 고객사 품번 열에 CB-2208', () => {
+      const sh = DL.drawingSheets(resB, { unit: 'pt', profile: '예시고객사B' });
+      const r1 = sh['자재 판별'][1];
+      assert.deepEqual([r1[2], r1[4], r1[16], r1[17], r1[18], r1[19]], ['MX-8P-040', '기존 자재', '제조사 품번', 'CB-2208', 1, '예시고객사B']);
+      assert.equal(sh['품번별 요약'].find(r => r[1] === 'KP-100-B')[9], 4);
+      assert.equal(sh['확인 필요'].length, 4);   // 매핑 없는 고객사 품번 1 + 확정 전 신규 2 + 머리
+    });
+    test('커넥터 부자재: 부자재 마스터 9행, 커넥터 수량 × 1개당 수량으로 펼침, 끄면 안 펼침', () => {
+      assert.equal(subRows.length, 9);
+      const lines = LR.expandBom(resB, subRows, { mapRows: DM });
+      const subsOf = (pn) => lines.filter(l => l.level === 'sub' && l.parent === pn);
+      assert.deepEqual(subsOf('MX-8P-040').map(l => [l.pn, l.qty]), [['TM-050-A', 8], ['SL-050-R', 8], ['RT-8P-01', 1]]);
+      assert.deepEqual(subsOf('CB-2210').map(l => [l.pn, l.qty]), [['TM-050-A', 4], ['SL-050-R', 4], ['RT-2P-01', 2]]);   // 고객사 품번도 대조표로 찾은 제조사 품번으로 부자재 조회
+      assert.equal(subsOf('MX-8P-040')[2].status, '부자재 — 사내 마스터에 없음');
+      const key = resB.rows[0].key;
+      const off = LR.expandBom(resB, subRows, { mapRows: DM, off: { [key]: true } });
+      assert.equal(off.filter(l => l.parent === 'MX-8P-040').length, 0);
+      assert.equal(LR.bomSheet(lines)[0][0], '구분');
+    });
+  }
+}
 
 console.log(`\n${passed}개 통과` + (process.exitCode ? ' — 실패 있음' : ''));
