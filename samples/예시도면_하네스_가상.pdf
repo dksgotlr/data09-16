@@ -1,0 +1,97 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 2197 >>
+stream
+0 0 0 RG 0 0 0 rg 1 J 1 j
+1.2 w 15 15 812 565 re S
+1 w 560 15 267 110 re S
+1 w 560 103 m 827 103 l S
+1 w 560 81 m 827 81 l S
+1 w 560 59 m 827 59 l S
+1 w 560 37 m 827 37 l S
+BT /F1 8 Tf 566 109 Td (TITLE: SAMPLE HARNESS ASSY \(FICTITIOUS DATA\)) Tj ET
+BT /F1 9 Tf 566 87 Td (DWG NO. HN-24-0001) Tj ET
+BT /F1 8 Tf 566 65 Td (CUSTOMER: SAMPLE-A) Tj ET
+BT /F1 8 Tf 566 43 Td (REV A   SCALE NTS   SHEET 1/1) Tj ET
+BT /F1 7 Tf 566 21 Td (ALL PART NUMBERS ARE FICTITIOUS) Tj ET
+BT /F1 11 Tf 30 555 Td (WIRING HARNESS - SAMPLE DRAWING FOR PART MAPPING) Tj ET
+3 w 120 335 m 700 335 l S
+2 w 200 335 m 200 445 l S
+2 w 290 335 m 290 225 l S
+2 w 380 335 m 380 225 l S
+2 w 520 335 m 520 445 l S
+2 w 640 335 m 640 225 l S
+1.2 w 76 320 44 30 re S
+BT /F1 8 Tf 88 331 Td (CN1) Tj ET
+BT /F1 9 Tf 70 301 Td (CA-1001) Tj ET
+1.2 w 178 445 44 30 re S
+BT /F1 8 Tf 190 456 Td (CN2) Tj ET
+BT /F1 9 Tf 176 483 Td (CA1002) Tj ET
+1.2 w 268 195 44 30 re S
+BT /F1 8 Tf 280 206 Td (CN3) Tj ET
+BT /F1 9 Tf 266 181 Td (CA-) Tj ET
+BT /F1 9 Tf 281.5 181 Td (1003) Tj ET
+1.2 w 358 195 44 30 re S
+BT /F1 8 Tf 370 206 Td (CN4) Tj ET
+BT /F1 9 Tf 356 181 Td (CA-1004) Tj ET
+1.2 w 498 445 44 30 re S
+BT /F1 8 Tf 510 456 Td (CN5) Tj ET
+BT /F1 9 Tf 496 483 Td (CA-1099) Tj ET
+1.2 w 618 195 44 30 re S
+BT /F1 8 Tf 630 206 Td (CN6) Tj ET
+BT /F1 9 Tf 610 181 Td (MX-8P-040) Tj ET
+1.2 w 700 320 44 30 re S
+BT /F1 8 Tf 712 331 Td (CN7) Tj ET
+BT /F1 9 Tf 698 301 Td (CA-1001) Tj ET
+1 w 156 331 8 8 re S
+BT /F1 7.5 Tf 144 345 Td (CL-2001) Tj ET
+1 w 326 331 8 8 re S
+BT /F1 7.5 Tf 314 345 Td (CL-2001) Tj ET
+1 w 451 331 8 8 re S
+BT /F1 7.5 Tf 439 345 Td (CL-2O02) Tj ET
+1 w 586 331 8 8 re S
+BT /F1 7.5 Tf 574 345 Td (CL-7788) Tj ET
+1 w 420 319 14 10 re S
+BT /F1 8 Tf 402 305 Td (GR-3001) Tj ET
+1 w 230 325 m 280 325 l S
+BT /F1 7.5 Tf 226 311 Td (PT-5001 \(L=250\)) Tj ET
+BT /F1 8 Tf 536 395 Td (TP-0019) Tj ET
+0.6 w 528 397 m 521 395 l S
+BT /F1 7 Tf 206 395 Td (0.5SQ) Tj ET
+BT /F1 7 Tf 386 275 Td (0.85SQ AVSS) Tj ET
+BT /F1 7 Tf 646 275 Td (0.5SQ) Tj ET
+BT /F1 7 Tf 150 319 Td (250) Tj ET
+BT /F1 7 Tf 420 349 Td (400) Tj ET
+BT /F1 7 Tf 30 125 Td (NOTE 1. DIMENSIONS IN MM) Tj ET
+BT /F1 7 Tf 30 113 Td (NOTE 2. ALL CLIPS PER CUSTOMER STANDARD) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Title (Sample harness drawing - fictitious) /Producer (data09-16 make-sample-drawing.js) >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000338 00000 n 
+0000002587 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R /Info 6 0 R >>
+startxref
+2698
+%%EOF

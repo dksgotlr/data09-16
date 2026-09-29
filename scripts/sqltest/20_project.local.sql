@@ -50,12 +50,15 @@ do $t$ begin
   perform public._assert_eq(
     (select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid
       join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public'),
-    38, '두 번 적용해도 정책이 38개 그대로다');
+    50, '두 번 적용해도 정책이 50개 그대로다');
   perform public._assert_eq(
     (select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid
       join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and not t.tgisinternal),
-    9, '두 번 적용해도 updated_at 트리거가 9개 그대로다');
+    12, '두 번 적용해도 updated_at 트리거가 12개 그대로다');
+  perform public._assert_eq(
+    (select count(*)::int from pg_constraint where conname = 'app_settings_draw_object'),
+    1, '두 번 적용해도 app_settings.draw CHECK 가 하나다');
   perform public._assert_eq(
     (select column_default from information_schema.columns
       where table_name = 'app_settings' and column_name = 'multi_sep'),
@@ -158,6 +161,47 @@ begin
     '수정하면 updated_at 트리거가 현재 시각으로 바꾼다');
 end $t$;
 
+do $t$ begin raise notice '[프로젝트] 도면 자재 판별 — drawing_file · drawing_mark · drawing_choice'; end $t$;
+do $t$
+declare v_dr bigint;
+begin
+  insert into public.drawing_file (file_name, file_type, unit, pages, drawing_no, customer)
+    values ('예시도면_하네스_가상.pdf', 'pdf', 'pt', '[{"w":842,"h":595}]', 'HN-24-0001', '예시고객사A')
+    returning id into v_dr;
+  perform set_config('test.a_dr', v_dr::text, false);
+  insert into public.drawing_mark (drawing_id, mark_key, page, x, y, w, h, pn, src) values
+    (v_dr, 'm1', 1, 70, 285, 35.51, 9, 'CA-1001', 'pdf'),
+    (v_dr, 'm2', 1, 327.06, 199.16, 117.88, 33.68, '', 'manual');       -- 위치만 표시(품번 빈 값)
+  insert into public.drawing_choice (pn_key, choice) values ('CA1004', '{"pick":"MX-3P-031|RM-C0005"}');
+  insert into public.drawing_choice (pn_key, choice) values ('CA1004', '{"isNew":true}')
+    on conflict (owner_id, pn_key) do update set choice = excluded.choice;
+  perform public._assert((select choice ? 'isNew' from public.drawing_choice where pn_key = 'CA1004'),
+    'onConflict (owner_id, pn_key) upsert 가 갱신으로 동작한다');
+  perform public._assert_eq((select (draw->>'minLen')::int from public.app_settings), 4, 'app_settings.draw 기본값이 도구 기본값과 같다');
+
+  perform public._assert_raises(format(
+    $q$insert into public.drawing_mark (drawing_id, mark_key, x, y, w, h, src) values (%s, 'm1', 0, 0, 1, 1, 'pdf')$q$, v_dr),
+    '23505', '같은 도면의 같은 표시 id 는 두 번 들어가지 않는다');
+  perform public._assert_raises(format(
+    $q$insert into public.drawing_mark (drawing_id, mark_key, x, y, w, h, src) values (%s, 'm9', 0, 0, 1, 1, 'ocr')$q$, v_dr),
+    '23514', '추출 방식은 pdf·manual 만');
+  perform public._assert_raises(format(
+    $q$insert into public.drawing_mark (drawing_id, mark_key, page, x, y, w, h, src) values (%s, 'm9', 0, 0, 0, 1, 1, 'pdf')$q$, v_dr),
+    '23514', '쪽 번호는 1 이상');
+  perform public._assert_raises(format(
+    $q$insert into public.drawing_mark (drawing_id, mark_key, x, y, w, h, src) values (%s, 'm9', -1, 0, 1, 1, 'pdf')$q$, v_dr),
+    '23514', '좌표는 0 이상');
+  perform public._assert_raises(
+    $q$insert into public.drawing_file (file_name, file_type, unit) values ('a.png', 'image', 'pt')$q$,
+    '23514', '이미지 도면의 좌표 단위는 px');
+  perform public._assert_raises(
+    $q$insert into public.drawing_choice (pn_key, choice) values ('X1', '{"other":1}')$q$,
+    '23514', '담당자 처리는 pick·code·isNew 중 하나');
+  perform public._assert_raises(
+    $q$update public.app_settings set draw = '[]'::jsonb$q$,
+    '23514', 'app_settings.draw 는 객체만');
+end $t$;
+
 do $t$ begin raise notice '[프로젝트] 기록성 표(bom_export_log)'; end $t$;
 do $t$ begin
   perform public._assert_rows(
@@ -182,7 +226,8 @@ declare
   v_map text := current_setting('test.a_map');
 begin
   foreach t in array array['master_file', 'map_row', 'spec_row', 'column_mapping', 'harness_bom',
-                           'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings', 'bom_export_log']
+                           'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings', 'bom_export_log',
+                           'drawing_file', 'drawing_mark', 'drawing_choice']
   loop
     perform public._assert_rows(format('select 1 from public.%I', t), 0, 'B 에게 A 의 ' || t || ' 가 안 보인다');
   end loop;
@@ -209,6 +254,14 @@ begin
     $q$insert into public.map_row (master_file_id, row_no, code) values (%s, 77, 'X')$q$, v_map),
     '42501', 'B 는 A 의 마스터에 행을 끼워 넣을 수 없다');
   perform public._assert_raises(format(
+    $q$insert into public.drawing_mark (drawing_id, mark_key, x, y, w, h, src) values (%s, 'b1', 0, 0, 1, 1, 'manual')$q$,
+    current_setting('test.a_dr')),
+    '42501', 'B 는 A 의 도면에 자재 표시를 끼워 넣을 수 없다');
+  perform public._assert_rows('update public.drawing_mark set pn = $$탈취$$ where drawing_id = ' || current_setting('test.a_dr'),
+    0, 'B 는 A 의 drawing_mark 를 고칠 수 없다(0행)');
+  -- B 도 같은 품번 열쇠로 자기 처리를 둘 수 있다(UNIQUE 는 사용자별)
+  insert into public.drawing_choice (pn_key, choice) values ('CA1004', '{"code":"RM-B"}');
+  perform public._assert_raises(format(
     $q$insert into public.bom_export_log (bom_id, bom_type, file_format) values (%s, '신규', 'xlsx')$q$, v_bom),
     '42501', 'B 의 내보내기 기록이 A 의 도면을 가리킬 수 없다');
 
@@ -227,7 +280,8 @@ do $t$
 declare t text;
 begin
   foreach t in array array['master_file', 'map_row', 'spec_row', 'column_mapping', 'harness_bom',
-                           'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings', 'bom_export_log']
+                           'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings', 'bom_export_log',
+                           'drawing_file', 'drawing_mark', 'drawing_choice']
   loop
     perform public._assert_rows(format('select 1 from public.%I', t), 0, 'anon 에게 ' || t || ' 가 안 보인다');
   end loop;
@@ -237,6 +291,8 @@ begin
     '42501', 'anon 은 master_file 을 쓸 수 없다');
   perform public._assert_raises($q$insert into public.bom_export_log (bom_type, file_format) values ('신규', 'csv')$q$,
     '42501', 'anon 은 bom_export_log 를 쓸 수 없다');
+  perform public._assert_raises($q$insert into public.drawing_file (file_name, file_type, unit) values ('x.pdf', 'pdf', 'pt')$q$,
+    '42501', 'anon 은 drawing_file 을 쓸 수 없다');
   perform public._assert_raises($q$select public.set_updated_at()$q$,
     '42501', 'anon 은 set_updated_at() 을 실행할 수 없다');
 end $t$;
@@ -270,6 +326,8 @@ end $t$;
 
 -- 정리
 delete from public.bom_export_log;
+delete from public.drawing_choice;
+delete from public.drawing_file;
 delete from public.app_settings;
 delete from public.column_mapping;
 delete from public.harness_bom;

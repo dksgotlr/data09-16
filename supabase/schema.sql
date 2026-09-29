@@ -12,7 +12,7 @@
 --  본인 프로젝트에 올리는 것을 전제로 하므로 테이블 이름에 접두사를 붙이지 않았습니다.
 --  회사 공용 URL·키는 어디에도 들어 있지 않습니다.
 --
---  테이블 (10개)
+--  테이블 (13개) — 2026-09-29 v0.2: 도면 자재 판별 3개(drawing_*) + app_settings.draw 칼럼 추가
 --    master_file     — 올린 마스터 엑셀 한 벌 (kind: map=부품 매핑 마스터 / spec=Application Spec)
 --    map_row         — 부품 매핑 마스터 한 행 (고객사 품번·제조사 품번·사내 자재 코드 …)
 --    spec_row        — Application Spec 한 행 (커넥터·터미널·실·방수전·전선 규격 범위)
@@ -23,8 +23,11 @@
 --    bom_choice      — 확인 대상에 대한 담당자 선택 (후보 선택 또는 직접 입력)
 --    app_settings    — 사용자별 산출 설정 (여유율·경계값 처리·방수전·단위·구분 기호·정규화)
 --    bom_export_log  — BOM 내보내기 기록 — 기록성, 수정·삭제 불가
+--    drawing_file    — 도면 자재 판별에 올린 도면 한 건 (파일 이름·PDF/이미지·쪽 크기·도면번호·고객사)
+--    drawing_mark    — 도면 위 자재 표시 한 개 (쪽·좌표·도면 표기 품번·자재 종류·추출 방식)
+--    drawing_choice  — 품번별 담당자 처리 (후보 선택·사내 코드 직접 입력·신규 확정)
 --
---  도면 PDF 원본은 저장하지 않습니다(고객사 설계 기밀). 도면에서 읽은 값만 저장합니다.
+--  도면 PDF·이미지 원본은 저장하지 않습니다(고객사 설계 기밀). 도면에서 읽은 값(품번·좌표)만 저장합니다.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -197,6 +200,65 @@ create table if not exists public.bom_export_log (
 );
 create index if not exists bom_export_log_owner_idx on public.bom_export_log (owner_id, exported_at desc);
 
+-- ── 도면 자재 판별 (기획서 v0.2 1차 목표, js/view-drawing.js) ──────────────
+-- 올린 도면 한 건 (state.drawing: fileName, type, unit, pages, info, sample). 원본 파일은 넣지 않는다.
+create table if not exists public.drawing_file (
+  id            bigint generated always as identity primary key,
+  owner_id      uuid not null default auth.uid(),
+  file_name     text not null check (length(btrim(file_name)) > 0),
+  file_type     text not null check (file_type in ('pdf', 'image')),
+  unit          text not null check (unit in ('pt', 'px')),          -- 좌표 단위: PDF=pt, 이미지=px
+  pages         jsonb not null default '[]'::jsonb check (jsonb_typeof(pages) = 'array'),   -- [{w,h}] 쪽 크기
+  drawing_no    text not null default '',
+  customer      text not null default '',                           -- 이 고객사 품번으로 대조
+  is_sample     boolean not null default false,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  constraint drawing_file_unit_ok check ((file_type = 'pdf' and unit = 'pt') or (file_type = 'image' and unit = 'px'))
+);
+
+-- 도면 위 자재 표시 (state.drawing.marks: { id, page, x, y, w, h, pn, src, kind }) — 좌표는 쪽 왼쪽 위 기준
+create table if not exists public.drawing_mark (
+  id           bigint generated always as identity primary key,
+  owner_id     uuid not null default auth.uid(),
+  drawing_id   bigint not null references public.drawing_file(id) on delete cascade,
+  mark_key     text not null check (length(mark_key) > 0),   -- 도구 안의 표시 id(m1, m2 …)
+  page         int not null default 1 check (page > 0),
+  x            numeric not null check (x >= 0),
+  y            numeric not null check (y >= 0),
+  w            numeric not null check (w >= 0),
+  h            numeric not null check (h >= 0),
+  pn           text not null default '',                     -- 도면 표기 품번(빈 값 = 위치만 표시)
+  kind         text not null default '',                     -- 담당자가 고친 자재 종류(빈 값 = 마스터·추정 값)
+  src          text not null check (src in ('pdf', 'manual')),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  -- ⚠ upsert 시 onConflict: 'drawing_id,mark_key'
+  constraint drawing_mark_key unique (drawing_id, mark_key)
+);
+
+-- 품번별 담당자 처리 (state.drawChoices[정리한 품번] = { pick } | { code, mfr, name } | { isNew: true })
+-- 도구는 같은 품번이면 도면이 달라도 같은 처리를 쓰므로 사용자·품번 단위로 한 행이다.
+create table if not exists public.drawing_choice (
+  id          bigint generated always as identity primary key,
+  owner_id    uuid not null default auth.uid(),
+  pn_key      text not null check (length(pn_key) > 0),
+  choice      jsonb not null check (jsonb_typeof(choice) = 'object' and (choice ? 'pick' or choice ? 'code' or choice ? 'isNew')),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  -- ⚠ upsert 시 onConflict: 'owner_id,pn_key'
+  constraint drawing_choice_key unique (owner_id, pn_key)
+);
+
+-- 품번 후보 규칙 (drawing-logic.js DEFAULT_DRAW_SETTINGS) — 기존 app_settings 에 칼럼으로 붙인다
+alter table public.app_settings add column if not exists draw jsonb not null
+  default '{"minLen": 4, "needMix": true, "wireFilter": true, "exclude": "", "fuzzy": 1, "confusable": true}'::jsonb;
+do $c$ begin
+  if not exists (select 1 from pg_constraint where conname = 'app_settings_draw_object') then
+    alter table public.app_settings add constraint app_settings_draw_object check (jsonb_typeof(draw) = 'object');
+  end if;
+end $c$;
+
 -- ----------------------------------------------------------------------------
 -- 2. 함수 — search_path 고정
 -- ----------------------------------------------------------------------------
@@ -213,7 +275,8 @@ do $trg$
 declare t text;
 begin
   foreach t in array array['master_file', 'map_row', 'spec_row', 'column_mapping', 'harness_bom',
-                           'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings']
+                           'bom_connector', 'bom_circuit', 'bom_choice', 'app_settings',
+                           'drawing_file', 'drawing_mark', 'drawing_choice']
   loop
     execute format('drop trigger if exists %I on public.%I', t || '_updated_at', t);
     execute format('create trigger %I before update on public.%I for each row execute function public.set_updated_at()',
@@ -236,12 +299,15 @@ alter table public.bom_circuit    enable row level security;
 alter table public.bom_choice     enable row level security;
 alter table public.app_settings   enable row level security;
 alter table public.bom_export_log enable row level security;
+alter table public.drawing_file   enable row level security;
+alter table public.drawing_mark   enable row level security;
+alter table public.drawing_choice enable row level security;
 
 -- 3-1. 부모 표 : 본인 행만 읽기·쓰기·수정·삭제
 do $rls$
 declare t text;
 begin
-  foreach t in array array['master_file', 'column_mapping', 'harness_bom', 'app_settings']
+  foreach t in array array['master_file', 'column_mapping', 'harness_bom', 'app_settings', 'drawing_file', 'drawing_choice']
   loop
     execute format('drop policy if exists %I on public.%I', t || '_select', t);
     execute format('drop policy if exists %I on public.%I', t || '_insert', t);
@@ -271,7 +337,8 @@ begin
       ('spec_row',      'exists (select 1 from public.master_file f where f.id = master_file_id and f.owner_id = auth.uid() and f.kind = ''spec'')'),
       ('bom_connector', 'exists (select 1 from public.harness_bom b where b.id = bom_id and b.owner_id = auth.uid())'),
       ('bom_circuit',   'exists (select 1 from public.harness_bom b where b.id = bom_id and b.owner_id = auth.uid())'),
-      ('bom_choice',    'exists (select 1 from public.harness_bom b where b.id = bom_id and b.owner_id = auth.uid())')
+      ('bom_choice',    'exists (select 1 from public.harness_bom b where b.id = bom_id and b.owner_id = auth.uid())'),
+      ('drawing_mark',  'exists (select 1 from public.drawing_file d where d.id = drawing_id and d.owner_id = auth.uid())')
     ) as v(t, parent_ok)
   loop
     execute format('drop policy if exists %I on public.%I', r.t || '_select', r.t);

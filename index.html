@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>하네스 BOM 산출 — 품번 교차 검증·종속 자재 산출</title>
-  <meta name="description" content="부품 매핑 마스터와 Application Spec 엑셀을 열 매핑으로 불러오고, 도면에서 읽은 커넥터·전선 규격으로 품번을 교차 검증해 터미널·실까지 산출한 뒤 BOM 엑셀로 내보내는 브라우저 도구(1단계)">
+  <title>하네스 도면 자재 판별 — 사내 매핑·신규 표시·데이터 추출</title>
+  <meta name="description" content="하네스 도면(PDF·이미지)의 커넥터·클립 등 전 자재를 통합 자재 마스터와 대조해 도면 위에 기존·매핑 필요·신규를 표시하고, 같은 내용을 좌표와 함께 엑셀로 따로 뽑는 브라우저 도구. BOM 산출(터미널·실)은 다음 단계">
   <meta name="robots" content="noindex">
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -13,26 +14,28 @@
   <header class="site-header">
     <div class="inner header-inner">
       <a class="brand" href="#/masters">
-        <span class="brand-name">하네스 BOM 산출</span>
-        <span class="brand-sub">품번 교차 검증 · 터미널·실 산출 · BOM 엑셀</span>
+        <span class="brand-name">하네스 도면 자재 판별</span>
+        <span class="brand-sub">사내 자재 매핑 · 도면 위 신규 표시 · 자재 데이터 추출</span>
       </a>
       <nav class="nav" id="nav" aria-label="주 메뉴">
         <a href="#/masters" data-route="masters"><span class="step">1</span>마스터 데이터</a>
-        <a href="#/parts" data-route="parts"><span class="step">2</span>부품 LIST</a>
-        <a href="#/check" data-route="check"><span class="step">3</span>검증·산출</a>
-        <a href="#/bom" data-route="bom"><span class="step">4</span>BOM</a>
+        <a href="#/drawing" data-route="drawing"><span class="step">2</span>도면 자재 판별</a>
+        <span class="nav-sep" aria-hidden="true">BOM 산출(다음 단계)</span>
+        <a href="#/parts" data-route="parts" class="nav-next"><span class="step">B1</span>부품 LIST</a>
+        <a href="#/check" data-route="check" class="nav-next"><span class="step">B2</span>검증·산출</a>
+        <a href="#/bom" data-route="bom" class="nav-next"><span class="step">B3</span>BOM</a>
         <a href="#/settings" data-route="settings">설정</a>
       </nav>
     </div>
   </header>
 
-  <div id="sampleBanner" class="sample-banner" hidden>예시 데이터 — 가상의 품번·자재 코드로 시연 중입니다. 실제 자료가 아닙니다.</div>
+  <div id="sampleBanner" class="sample-banner" hidden>예시 데이터 — 가상의 도면·품번·자재 코드로 시연 중입니다. 실제 자료가 아닙니다.</div>
   <div id="storageBanner" class="warn-banner" hidden>이 브라우저에 저장할 수 없어 창을 닫으면 입력이 사라집니다. 결과는 BOM 엑셀로 내보내 보관하세요.</div>
 
   <main id="main" class="inner main" tabindex="-1"></main>
 
   <footer class="site-footer">
-    <div class="inner">1단계 도구 · 파일은 이 브라우저 안에서만 읽고 계산하며 외부로 보내지 않습니다</div>
+    <div class="inner">1차 목표 도구(v0.2) · 도면과 엑셀은 이 브라우저 안에서만 읽고 계산하며 외부로 보내지 않습니다</div>
   </footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
@@ -50,6 +53,11 @@
   <script src="js/logic.js"></script>
   <script src="js/sample-data.js"></script>
   <script src="js/store.js"></script>
+  <script src="js/drawing-logic.js"></script>
+  <script src="js/drawing-sample.js"></script>
+  <script src="js/drawing-sample-pdf.js"></script>
+  <script src="js/view-drawing.js"></script>
   <script src="js/app.js"></script>
+  <!-- pdf.js(vendor/pdfjs, 약 1.4MB)는 도면 PDF 를 불러올 때만 js/view-drawing.js 가 읽어 들입니다 -->
 </body>
 </html>

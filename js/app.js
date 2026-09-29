@@ -1,15 +1,19 @@
 /* 하네스 BOM 산출 — 화면 (1단계). 로직은 js/logic.js(BomLogic) */
 (function () {
   'use strict';
-  var L = window.BomLogic, S = window.BomSample, Store = window.BomStore;
+  var L = window.BomLogic, S = window.BomSample, Store = window.BomStore, DL = window.DrawLogic;
   var main = document.getElementById('main');
 
   // ── 상태 ──────────────────────────────────────────────────────
   function emptyParts() {
     return { header: { drawingNo: '', drawingName: '', rev: '', customer: '', bomType: '신규' }, connectors: [], circuits: [] };
   }
+  function emptyDrawing() {
+    return { fileName: '', type: '', unit: 'pt', pages: [], info: { drawingNo: '', customer: '' }, marks: [], queue: [], sample: false, nextId: 1 };
+  }
   function emptyState() {
-    return { masters: { map: null, spec: null }, parts: emptyParts(), settings: L.mergeSettings(null), choices: {}, sample: {} };
+    return { masters: { map: null, spec: null }, parts: emptyParts(), settings: L.mergeSettings(null), choices: {}, sample: {},
+      drawing: emptyDrawing(), drawChoices: {}, drawSettings: DL.mergeDrawSettings(null) };
   }
   var state = (function () {
     var s = Store.load(), d = emptyState();
@@ -20,6 +24,10 @@
     d.settings = L.mergeSettings(s.settings);
     d.choices = s.choices || {};
     d.sample = s.sample || {};
+    d.drawing = Object.assign(emptyDrawing(), s.drawing || {});
+    d.drawing.info = Object.assign(emptyDrawing().info, d.drawing.info || {});
+    d.drawChoices = s.drawChoices || {};
+    d.drawSettings = DL.mergeDrawSettings(s.drawSettings);
     return d;
   })();
   var pending = null;         // 열 매핑 중인 파일(저장 안 함)
@@ -28,7 +36,7 @@
   function save() {
     var ok = Store.save(state);
     document.getElementById('storageBanner').hidden = ok && Store.available();
-    document.getElementById('sampleBanner').hidden = !(state.sample.map || state.sample.spec || state.sample.parts);
+    document.getElementById('sampleBanner').hidden = !(state.sample.map || state.sample.spec || state.sample.parts || state.drawing.sample);
   }
 
   // ── 도우미 ────────────────────────────────────────────────────
@@ -166,11 +174,11 @@
   }
   function askLoadSample() {
     var has = state.masters.map || state.masters.spec || state.parts.connectors.length;
-    (has ? confirmBox('예시 데이터 불러오기', '지금 불러온 마스터와 부품 LIST 를 예시 데이터로 바꿉니다. 계속할까요?', '바꾸기') : Promise.resolve(true))
+    (has ? confirmBox('BOM 산출 예시 불러오기', '지금 불러온 마스터와 부품 LIST 를 BOM 산출 예시 데이터로 바꿉니다. 계속할까요?', '바꾸기') : Promise.resolve(true))
       .then(function (ok) {
         if (!ok) return;
         loadSample();
-        toast('예시 데이터를 불러왔습니다. 3. 검증·산출에서 확인 대상을 처리해 보세요.');
+        toast('BOM 산출 예시를 불러왔습니다. B2. 검증·산출에서 확인 대상을 처리해 보세요.');
         if (location.hash === '#/masters') render(); else location.hash = '#/masters';
       });
   }
@@ -180,8 +188,8 @@
     var wrap = [];
     wrap.push(h('div', { class: 'page-head' },
       h('h1', { text: '1. 마스터 데이터' }),
-      h('button', { type: 'button', class: 'btn', onclick: askLoadSample, text: '예시 데이터 불러오기' })));
-    wrap.push(h('p', { class: 'lead', text: '부품 매핑 마스터와 Application Spec 엑셀을 올리고, 실제 열 이름을 표준 항목에 연결합니다. 파일은 이 브라우저 안에서만 읽습니다.' }));
+      h('button', { type: 'button', class: 'btn', onclick: askLoadSample, text: 'BOM 산출 예시 불러오기' })));
+    wrap.push(h('p', { class: 'lead', text: '부품 매핑 마스터(통합 자재 마스터)를 올리고 실제 열 이름을 표준 항목에 연결합니다. 「2. 도면 자재 판별」에는 부품 매핑 마스터만 있으면 되고, Application Spec 은 다음 단계인 BOM 산출(터미널·실)에 씁니다. 파일은 이 브라우저 안에서만 읽습니다.' }));
     if (!state.masters.map && !state.masters.spec && !pending) {
       wrap.push(h('div', { class: 'notice info' },
         h('p', null, '처음 쓰신다면 「예시 데이터 불러오기」로 흐름을 먼저 보실 수 있습니다. 가상의 품번 14행·Application Spec 7행·커넥터 5개 도면이 들어갑니다.'),
@@ -192,8 +200,9 @@
           h('a', { href: 'samples/예시데이터_부품LIST_회로.csv', text: '부품LIST_회로.csv' }))));
     }
     wrap.push(h('div', { class: 'grid-2' }, masterCard('map'), masterCard('spec')));
-    if (state.masters.map && state.masters.spec) {
-      wrap.push(h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/parts', text: '다음: 2. 부품 LIST' })));
+    if (state.masters.map) {
+      wrap.push(h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/drawing', text: '다음: 2. 도면 자재 판별' }),
+        state.masters.spec ? h('a', { class: 'btn', href: '#/parts', text: 'BOM 산출(다음 단계): B1. 부품 LIST' }) : null));
     }
     return wrap;
   }
@@ -202,8 +211,8 @@
     var m = state.masters[kind];
     var title = kind === 'map' ? '부품 매핑 마스터' : 'Application Spec';
     var desc = kind === 'map'
-      ? '고객사 품번 – 제조사 품번 – 사내 자재 코드 대응표'
-      : '커넥터 품번별 적용 터미널·와이어 실·전선 규격 범위(방수전이 있으면 함께)';
+      ? '통합 자재 마스터 — 부품 분류 · 사내 자재 코드 · 제조사 품번 · 고객사별 품번. 도면 자재 판별과 BOM 산출에 함께 씁니다'
+      : '커넥터 품번별 적용 터미널·와이어 실·전선 규격 범위(방수전이 있으면 함께). BOM 산출(다음 단계)에만 씁니다';
     var card = h('section', { class: 'card', 'aria-label': title });
     append(card, h('h2', null, title, ' ', m ? badge(state.sample[kind] ? '예시 데이터' : '불러옴', state.sample[kind] ? 'warn' : 'ok') : badge('아직 없음', 'bad')));
     append(card, h('p', { class: 'muted small', text: desc }));
@@ -322,7 +331,7 @@
         h('input', { type: 'text', value: hd[key] || '', oninput: function (e) { hd[key] = e.target.value; save(); } }));
     }
     var out = [];
-    out.push(h('div', { class: 'page-head' }, h('h1', { text: '2. 부품 LIST' }),
+    out.push(h('div', { class: 'page-head' }, h('h1', { text: 'B1. 부품 LIST' }),
       h('button', { type: 'button', class: 'btn btn-danger btn-small', text: '부품 LIST 비우기', onclick: function () {
         confirmBox('부품 LIST 비우기', '도면 정보·커넥터·회로 입력과 담당자 선택을 모두 지웁니다.', '비우기').then(function (ok) {
           if (!ok) return; state.parts = emptyParts(); state.choices = {}; state.sample.parts = false; save(); render();
@@ -344,7 +353,7 @@
       editTable(P.circuits, CIRC_COLS, '회로'),
       h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn btn-small', text: '행 추가', onclick: function () { P.circuits.push({ pos: '', pole: '', spec: '', wire: '' }); save(); render(); } })),
       pasteBox(P.circuits, CIRC_COLS, ['전선규격', '극번호', '커넥터위치'], '회로')));
-    out.push(h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/check', text: '다음: 3. 검증·산출' })));
+    out.push(h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/check', text: '다음: B2. 검증·산출' })));
     return out;
   }
 
@@ -362,7 +371,7 @@
     if (!state.masters.spec) miss.push(h('li', null, h('a', { href: '#/masters', text: 'Application Spec' }), '을 불러와 주세요.'));
     if (!state.parts.connectors.length) miss.push(h('li', null, h('a', { href: '#/parts', text: '부품 LIST' }), '에 커넥터를 입력해 주세요.'));
     return miss.length ? h('div', { class: 'notice warn' }, h('p', null, '먼저 필요한 것:'), h('ul', null, miss),
-      h('button', { type: 'button', class: 'btn', text: '예시 데이터 불러오기', onclick: askLoadSample })) : null;
+      h('button', { type: 'button', class: 'btn', text: 'BOM 산출 예시 불러오기', onclick: askLoadSample })) : null;
   }
   function issueCard(iss, idx) {
     var card = h('div', { class: 'card issue' + (iss.resolved ? ' done' : ''), 'data-issue': iss.key });
@@ -411,7 +420,7 @@
     return card;
   }
   function renderCheck() {
-    var out = [h('div', { class: 'page-head' }, h('h1', { text: '3. 검증·산출' }))];
+    var out = [h('div', { class: 'page-head' }, h('h1', { text: 'B2. 검증·산출' }))];
     out.push(h('p', { class: 'lead', text: '매핑 마스터로 품번을 교차 확인하고, Application Spec 으로 터미널·실을 산출합니다. 자동으로 정할 수 없는 항목은 확인 대상으로 남기고 담당자가 고릅니다.' }));
     var miss = missingInputs(); if (miss) { out.push(miss); return out; }
     var r = computeNow();
@@ -446,7 +455,7 @@
           h('td', null, c.state === 'ok' ? badge('산출', 'ok') : c.state === 'pending' ? badge('보류', 'warn') : badge('확인 필요', 'bad')),
           h('td', { class: 'basis', text: c.note || '' }));
       })));
-    out.push(h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/bom', text: '다음: 4. BOM' })));
+    out.push(h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/bom', text: '다음: B3. BOM' })));
     return out;
   }
 
@@ -484,7 +493,7 @@
     } else go();
   }
   function renderBom() {
-    var out = [h('div', { class: 'page-head' }, h('h1', { text: '4. BOM' }))];
+    var out = [h('div', { class: 'page-head' }, h('h1', { text: 'B3. BOM' }))];
     var miss = missingInputs(); if (miss) { out.push(miss); return out; }
     var r = computeNow(), bom = L.aggregateBom(r.lines, state.settings), hd = state.parts.header;
     out.push(h('p', { class: 'lead', text: '같은 사내 자재 코드끼리 수량을 합친 BOM 입니다. 각 행의 근거 열에 어느 마스터 행에서 왔는지 남깁니다.' }));
@@ -493,7 +502,7 @@
       h('div', { class: 'tile' }, h('b', { text: hd.drawingNo || '-' }), h('span', { text: '도면 번호' + (hd.rev ? ' · REV ' + hd.rev : '') })),
       h('div', { class: 'tile' }, h('b', { text: bom.length }), h('span', { text: 'BOM 행' })),
       h('div', { class: 'tile ' + (r.open ? 'bad' : 'good') }, h('b', { text: r.open }), h('span', { text: '미해결 확인 대상' }))));
-    if (r.open) out.push(h('div', { class: 'notice bad' }, '확인 대상 ' + r.open + '건이 남아 있어 사내 코드가 비어 있는 행이 있습니다. ', h('a', { href: '#/check', text: '3. 검증·산출에서 처리하기' })));
+    if (r.open) out.push(h('div', { class: 'notice bad' }, '확인 대상 ' + r.open + '건이 남아 있어 사내 코드가 비어 있는 행이 있습니다. ', h('a', { href: '#/check', text: 'B2. 검증·산출에서 처리하기' })));
     else out.push(h('div', { class: 'notice good', text: '확인 대상을 모두 처리했습니다.' }));
     if (state.settings.margin) out.push(h('p', { class: 'small muted', text: '여유율 ' + state.settings.margin + '% 를 터미널·실·방수전 수량에 더하고 올림했습니다(설정).' }));
     out.push(tableWrap(['번호', '구분', '사내 자재 코드', '제조사 품번', '도면/산출 품번', '품명', h('th', { class: 'num', text: '수량' }), '사용 위치', '확인 상태', '근거'],
@@ -542,7 +551,7 @@
       h('div', { class: 'actions' },
         h('button', { type: 'button', class: 'btn', text: '저장된 열 연결 지우기', onclick: function () { Store.clearMappings(); toast('열 연결 설정을 지웠습니다.'); } }),
         h('button', { type: 'button', class: 'btn btn-danger', text: '모든 데이터 지우기', onclick: function () {
-          confirmBox('모든 데이터 지우기', '마스터 2종, 부품 LIST, 담당자 선택, 설정을 모두 지웁니다.', '지우기').then(function (ok) {
+          confirmBox('모든 데이터 지우기', '마스터 2종, 도면 표시·처리, 부품 LIST, 담당자 선택, 설정을 모두 지웁니다.', '지우기').then(function (ok) {
             if (!ok) return; Store.clear(); state = emptyState(); pending = null; save(); location.hash = '#/masters'; render(); toast('모두 지웠습니다.');
           });
         } }))));
@@ -550,7 +559,13 @@
   }
 
   // ── 라우팅 ───────────────────────────────────────────────────
-  var ROUTES = { masters: renderMasters, parts: renderParts, check: renderCheck, bom: renderBom, settings: renderSettings };
+  // 「2. 도면 자재 판별」 화면은 js/view-drawing.js — 이 파일의 도우미를 넘겨 씁니다
+  var viewCtx = {
+    h: h, append: append, toast: toast, openDialog: openDialog, confirmBox: confirmBox, badge: badge, today: today, L: L,
+    emptyDrawing: emptyDrawing, state: function () { return state; }, save: save, render: function () { render(); }
+  };
+  function renderDrawing() { return window.BomViews.drawing(viewCtx); }
+  var ROUTES = { masters: renderMasters, drawing: renderDrawing, parts: renderParts, check: renderCheck, bom: renderBom, settings: renderSettings };
   function render() {
     var name = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'masters';
     if (!ROUTES[name]) name = 'masters';

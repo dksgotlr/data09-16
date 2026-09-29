@@ -182,3 +182,106 @@ ol.steps li { margin-bottom: 4px; }
 .dialog::backdrop { background: rgba(20, 30, 40, .45); }
 .dialog-body { padding: 20px; margin: 0; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* ── 메뉴 — BOM 산출(다음 단계) 묶음 ───────── */
+.nav-sep { align-self: center; font-size: .75rem; color: var(--muted); padding: 0 4px 0 10px; border-left: 1px solid var(--line); white-space: nowrap; }
+.nav a.nav-next { font-weight: 500; color: var(--muted); }
+.nav a.nav-next .step { width: auto; min-width: 20px; padding: 0 4px; border-radius: 10px; }
+.nav a.nav-next[aria-current="page"] { color: var(--on-primary); }
+
+/* ── 2. 도면 자재 판별 ─────────────────────── */
+/* 판별 상태: 색 + 선 모양 + 글자 라벨을 함께 씁니다(색약 고려) */
+:root {
+  --st-existing: #1b7f3b;
+  --st-mapping: #b07800;
+  --st-mapping-tag: #f2c14e;
+  --st-new: #c62828;
+  --st-empty: #6b7280;
+}
+.lg { display: inline-block; width: 22px; height: 13px; margin-right: 6px; vertical-align: -1px; box-sizing: border-box; flex: none; }
+.lg-existing { border: 2px solid var(--st-existing); background: rgba(27, 127, 59, .10); }
+.lg-mapping { border: 2px dashed var(--st-mapping); background: rgba(240, 180, 0, .18); }
+.lg-new { border: 3px double var(--st-new); background: repeating-linear-gradient(45deg, rgba(198, 40, 40, .28) 0 2px, transparent 2px 5px); }
+.lg-empty { border: 2px dotted var(--st-empty); }
+
+.dv-tiles .dv-tile { text-align: left; font: inherit; cursor: pointer; }
+.dv-tile b { display: flex; align-items: center; }
+.dv-tile.t-existing b { color: var(--st-existing); }
+.dv-tile.t-mapping b { color: var(--warn); }
+.dv-tile.t-new b { color: var(--st-new); }
+.dv-tile.t-empty b { color: var(--st-empty); }
+.dv-tile.on { outline: 3px solid var(--primary); outline-offset: -1px; }
+
+.draw-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
+.draw-layout > .card { margin-bottom: 0; }
+@media (min-width: 1100px) {
+  .draw-layout { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; }
+  .dv-view, .dv-list { position: sticky; top: 76px; }
+  .dv-table { max-height: calc(100vh - 190px); overflow: auto; }
+}
+.dv-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 6px; }
+.dv-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.dv-zoom { min-width: 3.2em; text-align: center; }
+.dv-group.seg .btn.on { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.dv-hint { margin: 4px 0 8px; }
+.dv-viewer {
+  position: relative; overflow: auto; height: min(68vh, 720px); min-height: 280px;
+  border: 1px solid var(--line); border-radius: 6px; background: #e9edf1;
+}
+@media (min-width: 1100px) { .dv-viewer { height: calc(100vh - 290px); } }
+.dv-stage { position: relative; background: #fff; margin: 0; touch-action: pan-x pan-y; }
+.dv-stage.marking { cursor: crosshair; touch-action: none; }
+.dv-holder, .dv-marks { position: absolute; inset: 0; }
+.dv-holder canvas { display: block; }
+.dv-wait { display: block; padding: 16px; }
+.dv-marks { pointer-events: none; }
+.mk {
+  position: absolute; box-sizing: border-box; pointer-events: auto; cursor: pointer;
+  border: 2px solid var(--st-existing); background: rgba(27, 127, 59, .10); border-radius: 2px;
+}
+.dv-stage.marking .mk { pointer-events: none; }
+.mk.st-mapping { border: 2.5px dashed var(--st-mapping); background: rgba(240, 180, 0, .18); }
+.mk.st-new { border: 3px double var(--st-new); background: repeating-linear-gradient(45deg, rgba(198, 40, 40, .20) 0 3px, transparent 3px 7px); }
+.mk.st-empty { border: 2px dotted var(--st-empty); background: rgba(107, 114, 128, .08); }
+.mk-tag {
+  position: absolute; left: -2px; bottom: 100%; margin-bottom: 1px;
+  font-size: 10px; line-height: 1.25; font-weight: 700; padding: 0 3px; white-space: nowrap; color: #fff; background: var(--st-existing);
+  word-break: normal;
+}
+.mk.st-mapping .mk-tag { background: var(--st-mapping-tag); color: #2b2000; }
+.mk.st-new .mk-tag { background: var(--st-new); }
+.mk.st-empty .mk-tag { background: var(--st-empty); }
+.mk.dim { opacity: .28; }
+.mk.sel { outline: 3px solid var(--primary); outline-offset: 2px; z-index: 3; opacity: 1; }
+.mk:focus-visible { outline: 3px solid #8fb4e3; outline-offset: 2px; }
+.mk-temp { position: absolute; border: 2px dashed var(--primary); background: rgba(31, 95, 168, .08); }
+@keyframes dv-flash { 0% { box-shadow: 0 0 0 0 rgba(31, 95, 168, .7); } 100% { box-shadow: 0 0 0 14px rgba(31, 95, 168, 0); } }
+.mk.flash { animation: dv-flash .9s ease-out 2; }
+@media (prefers-reduced-motion: reduce) { .mk.flash, tr.dv-row.flash { animation: none; } }
+.dv-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; color: var(--muted); }
+.dv-legend span { display: inline-flex; align-items: center; }
+
+.dv-queue { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; background: var(--info-bg); }
+.dv-queue-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.dv-queue summary { cursor: pointer; margin-top: 4px; }
+.dv-queue textarea { min-height: 70px; margin-top: 6px; }
+
+.dv-list-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 8px; }
+.dv-list-head h2 { margin: 0; }
+.dv-table th { position: sticky; top: 0; z-index: 1; }
+tr.dv-row { cursor: pointer; }
+tr.dv-row:hover td { background: #f7f9fb; }
+tr.dv-row.sel td { background: var(--info-bg); }
+tr.dv-row.sel td:first-child { box-shadow: inset 4px 0 0 var(--primary); }
+@keyframes dv-row-flash { 0% { background: #cfe0f5; } 100% { background: var(--info-bg); } }
+tr.dv-row.flash td { animation: dv-row-flash 1.2s ease-out; }
+.dv-no { display: inline-flex; align-items: center; border: 0; background: none; padding: 2px; cursor: pointer; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dv-no .lg { width: 16px; height: 11px; margin-right: 4px; }
+.dv-pn { min-width: 110px; }
+.dv-kind { min-width: 72px; }
+.dv-judge { min-width: 190px; }
+.dv-judge-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.dv-code { font-weight: 700; }
+.dv-detail { color: var(--muted); margin-top: 2px; }
+.dv-act { min-width: 120px; }
+.dv-rules summary { cursor: pointer; }
