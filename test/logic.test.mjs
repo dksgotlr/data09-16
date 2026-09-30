@@ -537,6 +537,17 @@ test('머리글 역할 짐작: 영문·한글 머리글, 저장된 역할이 먼
       assert.equal(res.rows.find(r => r.pn === 'CA-1099').reason, 'cust_unmapped');
       assert.equal(res.rows.find(r => r.pn === 'CL-2O02').reason, 'similar');
     });
+    test('대시보드 요약(예시 A): 자재 종류별 합이 전체 14곳, 매핑 수 = 기존 + 매핑된 고객사 품번, 차이 = 사내 코드 없는 곳', () => {
+      const marks = ids(DL.extractCandidates(A, { index: DL.buildMasterIndex(DM), profile: PA() }));
+      const res = DL.classifyMarks({ marks, mapRows: DM, customer: DS.customer, profile: PA() });
+      const sum = DL.kindSummary(res.rows);
+      assert.equal(sum.reduce((a, x) => a + x.total, 0), 14);
+      const mapped = res.rows.filter(r => r.code && (r.status === 'existing' || r.status === 'customer')).length;
+      assert.equal(sum.reduce((a, x) => a + x.mapped, 0), mapped);
+      assert.ok(mapped > 0 && mapped < 14);
+      sum.forEach(x => { assert.equal(x.diff, x.total - x.mapped); assert.equal(x.match, x.diff === 0); });
+      assert.equal(sum.reduce((a, x) => a + x.open, 0), res.open);
+    });
     const b = PB();
     const tb = LR.parseTable(Bi, { page: 1, headerHints: LR.headerHints(b), saved: b.table.roles });
     test('예시 B: 표제란으로 규칙 B, 부품표 머리글 5칸·8행, 열 역할', () => {
@@ -584,5 +595,36 @@ test('머리글 역할 짐작: 영문·한글 머리글, 저장된 역할이 먼
     });
   }
 }
+
+console.log('\n대시보드 · 분석 기록');
+test('자재 종류별 요약: 종류 없는 표시는 「종류 미정」, 매핑 없는 고객사 품번·신규·확인 필요는 차이로 셈', () => {
+  const rows = [
+    { kind: '커넥터', status: 'existing', code: 'RM-1' }, { kind: '커넥터', status: 'customer', code: 'RM-2' },
+    { kind: '커넥터', status: 'customer', code: '' }, { kind: '클립', status: 'existing', code: 'RM-3' },
+    { kind: '', status: 'new', code: '', confirmed: false }, { kind: '', status: 'mapping', code: '' }
+  ];
+  const s = DL.kindSummary(rows);
+  assert.deepEqual(s.map(x => [x.kind, x.total, x.mapped, x.diff, x.match, x.custUnmapped]),
+    [['커넥터', 3, 2, 1, false, 1], ['클립', 1, 1, 0, true, 0], ['종류 미정', 2, 0, 2, false, 0]]);
+  assert.equal(s[2].count.new, 1); assert.equal(s[2].open, 2);
+  assert.deepEqual(DL.kindSummary([]), []);
+});
+test('분석 기록: 같은 도면은 한 줄, 판별이 같으면 그대로(시각 안 바뀜), 바뀌면 맨 위로·시각 갱신, 30건까지', () => {
+  const e = (f, total, open) => ({ fileName: f, drawingNo: '', total, open, count: { existing: total - open }, customer: 'A', profile: '', sample: false });
+  let r = DL.upsertHistory([], e('a.pdf', 5, 2), '2026-09-30T10:00:00');
+  assert.equal(r.changed, true); assert.equal(r.list.length, 1);
+  const same = DL.upsertHistory(r.list, e('a.pdf', 5, 2), '2026-09-30T11:00:00');
+  assert.equal(same.changed, false); assert.equal(same.list[0].at, '2026-09-30T10:00:00');
+  r = DL.upsertHistory(r.list, e('b.pdf', 3, 0), '2026-09-30T12:00:00');
+  assert.deepEqual(r.list.map(x => x.fileName), ['b.pdf', 'a.pdf']);
+  const id = r.list[1].id;
+  r = DL.upsertHistory(r.list, e('a.pdf', 5, 1), '2026-09-30T13:00:00');
+  assert.deepEqual(r.list.map(x => x.fileName), ['a.pdf', 'b.pdf']);
+  assert.equal(r.list[0].at, '2026-09-30T13:00:00'); assert.equal(r.list[0].id, id); assert.equal(r.list[0].open, 1);
+  let big = [];
+  for (let i = 0; i < 35; i++) big = DL.upsertHistory(big, e('f' + i + '.pdf', 1, 0), 't' + i).list;
+  assert.equal(big.length, 30); assert.equal(big[0].fileName, 'f34.pdf');
+  assert.notEqual(DL.historyKey({ fileName: 'a.pdf', drawingNo: '1' }), DL.historyKey({ fileName: 'a.pdf', drawingNo: '2' }));
+});
 
 console.log(`\n${passed}개 통과` + (process.exitCode ? ' — 실패 있음' : ''));

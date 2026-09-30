@@ -53,28 +53,59 @@ code { background: #eef1f4; padding: 0 4px; border-radius: 4px; font-size: .92em
 .skip:focus { left: 8px; top: 8px; background: #fff; padding: 8px; z-index: 50; }
 [hidden] { display: none !important; }
 
-/* ── 머리 ─────────────────────────────── */
-.site-header { background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; }
-.header-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding-top: 10px; padding-bottom: 10px; }
-.brand { display: flex; flex-direction: column; text-decoration: none; color: var(--text); margin-right: auto; }
-.brand-name { font-weight: 800; font-size: 1.15rem; }
-.brand-sub { font-size: .8rem; color: var(--muted); }
-.nav { display: flex; flex-wrap: wrap; gap: 4px; }
-.nav a {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 12px; border-radius: var(--radius); text-decoration: none; color: var(--text); font-weight: 600; white-space: nowrap;
+/* ── 틀: 위 남색 머리 + 왼쪽 메뉴 (2026-09-30 디자인 시안) ── */
+:root { --top-h: 60px; --side-w: 220px; --navy: #14264a; --navy-2: #1d3563; --side-active: #e6ebf3; }
+.topbar {
+  position: sticky; top: 0; z-index: 30; height: var(--top-h);
+  display: flex; align-items: center; gap: 12px; padding: 0 20px; background: var(--navy); color: #fff;
 }
-.nav a:hover { background: var(--bg); }
-.nav a[aria-current="page"] { background: var(--primary); color: var(--on-primary); }
+.top-brand { display: flex; align-items: center; gap: 10px; color: #fff; text-decoration: none; min-width: 0; }
+.top-brand:focus-visible, .menu-btn:focus-visible { outline: 3px solid #9cc0ff; outline-offset: 2px; }
+.brand-mark { width: 34px; height: 34px; flex: none; border-radius: 4px; object-fit: contain; background: #fff; }
+.brand-name { font-weight: 800; font-size: 1.3rem; letter-spacing: -.01em; white-space: nowrap; }
+.brand-bar { color: #9fb1cf; font-weight: 300; font-size: 1.2rem; }
+.brand-sys { font-weight: 700; font-size: 1.12rem; white-space: nowrap; }
+.menu-btn { display: none; flex: none; width: 44px; height: 44px; border: 1px solid rgba(255, 255, 255, .35); border-radius: 8px; background: transparent; color: #fff; cursor: pointer; align-items: center; justify-content: center; }
+.menu-btn svg, .side-nav svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.menu-btn svg { width: 24px; height: 24px; }
+
+.shell { display: flex; min-height: calc(100vh - var(--top-h)); }
+.sidebar {
+  width: var(--side-w); flex: none; background: var(--surface); border-right: 1px solid var(--line);
+  position: sticky; top: var(--top-h); height: calc(100vh - var(--top-h)); overflow-y: auto; z-index: 25;
+}
+.side-nav { display: flex; flex-direction: column; gap: 2px; padding: 14px 10px; }
+.side-nav a { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 8px 12px; border-radius: 8px; color: var(--text); text-decoration: none; font-weight: 600; font-size: .95rem; }
+.side-nav a:hover { background: #f1f4f8; }
+.side-nav a[aria-current="page"] { background: var(--side-active); color: var(--navy); box-shadow: inset 3px 0 0 var(--navy); }
+.side-nav a:focus-visible { outline: 3px solid #8fb4e3; outline-offset: -2px; }
+.side-nav .side-sub { min-height: 38px; font-size: .9rem; font-weight: 500; color: #3d4754; }
+.side-nav .side-sub svg { width: 18px; height: 18px; }
+.side-nav .step { width: auto; min-width: 22px; padding: 0 4px; border-radius: 10px; background: #eef1f4; color: var(--primary-dark); }
+.side-sep { height: 1px; background: var(--line); margin: 10px 6px 8px; }
+.side-label { font-size: .78rem; color: var(--muted); padding: 6px 12px 2px; font-weight: 600; }
+.side-backdrop { position: fixed; inset: 0; background: rgba(8, 16, 32, .5); z-index: 24; }
+.content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+/* 세로 flex 안에서 margin:auto 는 늘이기를 끄므로 폭을 직접 줍니다 — 없으면 넓은 표가 main 을 밀어 냅니다 */
+.content > .main, .content > .site-footer { width: 100%; }
+.content > .main { flex: 1 0 auto; }
+@media (max-width: 1023px) {
+  .menu-btn { display: inline-flex; }
+  .topbar { padding: 0 var(--container-pad); }
+  .sidebar { position: fixed; left: 0; top: var(--top-h); bottom: 0; height: auto; transform: translateX(-100%); visibility: hidden; transition: transform .2s ease, visibility 0s linear .2s; }
+  .menu-open .sidebar { transform: none; visibility: visible; transition: transform .2s ease; box-shadow: 0 0 30px rgba(0, 0, 0, .3); }
+}
+@media (max-width: 520px) {
+  .brand-name { font-size: 1.08rem; }
+  .brand-sys { font-size: .95rem; }
+  .brand-mark { width: 30px; height: 30px; }
+  .top-brand { gap: 7px; }
+}
+@media (max-width: 359px) { .brand-bar, .brand-sys { display: none; } }
+@media (prefers-reduced-motion: reduce) { .sidebar { transition: none !important; } }
 .step {
   display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
   background: var(--bg); color: var(--primary); font-size: .75rem; font-weight: 800;
-}
-.nav a[aria-current="page"] .step { background: var(--on-primary); color: var(--primary); }
-@media (max-width: 760px) {
-  .brand { width: 100%; }
-  .nav { width: 100%; }
-  .nav a { padding: 6px 8px; font-size: .92rem; }
 }
 
 .sample-banner, .warn-banner { font-size: .95rem; padding: 8px var(--container-pad); text-align: center; }
@@ -82,7 +113,7 @@ code { background: #eef1f4; padding: 0 4px; border-radius: 4px; font-size: .92em
 .warn-banner { background: var(--danger-bg); color: var(--danger); border-bottom: 1px solid #f2c4bf; }
 
 .main { padding-top: 24px; padding-bottom: 48px; }
-.site-footer { border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: .85rem; padding: 14px 0; }
+.site-footer { border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: .85rem; padding: 12px 0; text-align: center; }
 
 /* ── 카드·격자 ─────────────────────────── */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; min-width: 0; }
@@ -183,12 +214,6 @@ ol.steps li { margin-bottom: 4px; }
 .dialog-body { padding: 20px; margin: 0; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-/* ── 메뉴 — BOM 산출(다음 단계) 묶음 ───────── */
-.nav-sep { align-self: center; font-size: .75rem; color: var(--muted); padding: 0 4px 0 10px; border-left: 1px solid var(--line); white-space: nowrap; }
-.nav a.nav-next { font-weight: 500; color: var(--muted); }
-.nav a.nav-next .step { width: auto; min-width: 20px; padding: 0 4px; border-radius: 10px; }
-.nav a.nav-next[aria-current="page"] { color: var(--on-primary); }
-
 /* ── 2. 도면 자재 판별 ─────────────────────── */
 /* 판별 상태: 색 + 선 모양 + 글자 라벨을 함께 씁니다(색약 고려) */
 :root {
@@ -220,7 +245,7 @@ ol.steps li { margin-bottom: 4px; }
 .draw-layout > .card { margin-bottom: 0; }
 @media (min-width: 1100px) {
   .draw-layout { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; }
-  .dv-view, .dv-list { position: sticky; top: 76px; }
+  .dv-view, .dv-list { position: sticky; top: calc(var(--top-h) + 16px); }
   .dv-table { max-height: calc(100vh - 190px); overflow: auto; }
 }
 .dv-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 6px; }
@@ -322,3 +347,72 @@ tr.dv-subrow td { background: #fafbfc; }
 .dv-pats code { word-break: break-all; }
 .dv-inline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
 .dv-inline input { flex: 1 1 180px; min-width: 0; }
+
+/* ── 대시보드 (2026-09-30 디자인 시안) ─────────────── */
+.ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.dash-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-content: start; }
+.dash-grid .card { margin-bottom: 0; }
+@media (min-width: 1200px) { .dash-grid { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: start; } }
+.dash-card { border-radius: 12px; padding: 20px; box-shadow: 0 1px 2px rgba(20, 38, 74, .06); }
+.dash-card h2 { font-size: 1.2rem; margin-bottom: 14px; }
+.dash-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center;
+  min-height: 150px; padding: 18px 16px; border: 2px dashed #7d8a9b; border-radius: 10px; background: #fafbfd; cursor: pointer; color: var(--text);
+}
+.dash-drop:hover, .dash-drop.over { background: var(--info-bg); border-color: var(--primary); }
+.dash-drop:focus-within { outline: 3px solid #8fb4e3; outline-offset: 2px; }
+.dash-drop-ic { display: flex; gap: 10px; color: var(--navy); }
+.dash-drop-ic .ic { width: 36px; height: 36px; stroke-width: 1.6; }
+.dash-drop-text { font-weight: 600; max-width: 30em; }
+.dash-drop-hint { color: var(--muted); }
+.dash-empty { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #f3f5f8; }
+.dash-view { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 0; margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #e9edf1; }
+.dash-tools { display: flex; flex-direction: column; gap: 6px; padding: 8px 5px; background: #dde3ea; border-right: 1px solid var(--line); }
+.dash-tool { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #b9c3cf; border-radius: 6px; background: #fff; color: var(--text); cursor: pointer; padding: 0; }
+.dash-tool:hover { background: var(--info-bg); }
+.dash-tool:focus-visible { outline: 3px solid #8fb4e3; outline-offset: 1px; }
+.dash-view-main { position: relative; min-width: 0; }
+.dash-viewer.dv-viewer { height: 340px; min-height: 0; border: 0; border-radius: 0; cursor: grab; }
+.dash-viewer.panning { cursor: grabbing; user-select: none; }
+@media (max-width: 640px) { .dash-viewer.dv-viewer { height: 260px; } }
+.dash-file {
+  position: absolute; top: 8px; right: 8px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 2px 8px; border-radius: 4px; background: rgba(27, 36, 48, .88); color: #fff; font-size: .8rem; pointer-events: none;
+}
+.dash-view-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 8px; }
+.dash-table { margin-bottom: 10px; }
+.dash-table table { font-size: .94rem; }
+.dash-table th, .dash-table td { padding: 9px 12px; vertical-align: middle; }
+.dash-table thead th { background: #eef1f5; text-align: center; }
+.dash-table thead th:first-child { text-align: left; }
+.dash-table tbody th, .dash-table tfoot th { background: none; font-weight: 600; white-space: normal; }
+.dash-table tfoot td, .dash-table tfoot th { border-top: 1px solid var(--line); border-bottom: 0; background: #f7f9fb; }
+.dash-table td.num { text-align: center; font-variant-numeric: tabular-nums; }
+.dash-bd { margin-top: 2px; }
+.st-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px 2px 7px; border-radius: 999px; font-size: .86rem; font-weight: 700; white-space: nowrap; }
+.st-badge .ic { width: 17px; height: 17px; stroke-width: 2.1; }
+.st-ok { background: #e3f1e8; color: #17613a; }
+.st-warn { background: #fff1cc; color: #6e4700; }
+.dash-note { margin: 0 0 12px; }
+.btn-export { width: 100%; border-color: #9aa6b5; }
+.btn-export .ic-sheet { color: #17613a; width: 20px; height: 20px; }
+.dash-c3-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.dash-hist { list-style: none; margin: 0; padding: 0; }
+.dash-hist li { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.dash-hist li:last-child { border-bottom: 0; padding-bottom: 0; }
+.dash-hist-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.dash-hist-name { overflow-wrap: anywhere; }
+.dash-table thead th { white-space: normal; }
+.dash-bd span { white-space: nowrap; }
+@media (max-width: 520px) {
+  .dash-card { padding: 16px 14px; }
+  .dash-table table { font-size: .88rem; }
+  .dash-table th, .dash-table td { padding: 8px 6px; }
+  .st-badge { padding: 2px 8px 2px 5px; font-size: .8rem; }
+}
+.hist-table th { white-space: normal; vertical-align: bottom; }
+.hist-table th .lg { display: block; margin: 0 0 4px auto; }
+.hist-table .hist-doc { min-width: 200px; }
+.hist-table td.hist-doc b, .hist-table td.hist-doc div { overflow-wrap: anywhere; word-break: normal; }
+.hist-table td.hist-doc b { word-break: keep-all; }

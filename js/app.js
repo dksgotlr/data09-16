@@ -14,7 +14,7 @@
   }
   function emptyState() {
     return { masters: { map: null, spec: null, sub: null }, parts: emptyParts(), settings: L.mergeSettings(null), choices: {}, sample: {},
-      drawing: emptyDrawing(), drawChoices: {}, drawSettings: DL.mergeDrawSettings(null), profiles: [], drawSubOff: {} };
+      drawing: emptyDrawing(), drawChoices: {}, drawSettings: DL.mergeDrawSettings(null), profiles: [], drawSubOff: {}, history: [] };
   }
   var state = (function () {
     var s = Store.load(), d = emptyState();
@@ -32,12 +32,15 @@
     d.masters.sub = d.masters.sub || null;
     d.profiles = (Array.isArray(s.profiles) ? s.profiles : []).map(LR.normalizeProfile);
     d.drawSubOff = s.drawSubOff || {};
+    d.history = Array.isArray(s.history) ? s.history : [];
     return d;
   })();
   var pending = null;         // 열 매핑 중인 파일(저장 안 함)
   var ui = { onlyOpen: false, preview: {} };
 
+  var skipRecord = false;   // 기록을 지운 직후에는 지금 도면을 다시 적지 않음(다음 판별 변화부터 다시 적음)
   function save() {
+    if (skipRecord) skipRecord = false; else { try { recordHistory(); } catch (e) { /* 기록 실패는 저장을 막지 않음 */ } }
     var ok = Store.save(state);
     document.getElementById('storageBanner').hidden = ok && Store.available();
     document.getElementById('sampleBanner').hidden = !(state.sample.map || state.sample.spec || state.sample.sub || state.sample.parts || state.drawing.sample);
@@ -562,10 +565,124 @@
       h('div', { class: 'actions' },
         h('button', { type: 'button', class: 'btn', text: '저장된 열 연결 지우기', onclick: function () { Store.clearMappings(); toast('열 연결 설정을 지웠습니다.'); } }),
         h('button', { type: 'button', class: 'btn btn-danger', text: '모든 데이터 지우기', onclick: function () {
-          confirmBox('모든 데이터 지우기', '마스터 2종, 도면 표시·처리, 부품 LIST, 담당자 선택, 설정을 모두 지웁니다.', '지우기').then(function (ok) {
-            if (!ok) return; Store.clear(); state = emptyState(); pending = null; save(); location.hash = '#/masters'; render(); toast('모두 지웠습니다.');
+          confirmBox('모든 데이터 지우기', '마스터 3종, 도면 표시·처리, 고객사 규칙, 분석 기록, 부품 LIST, 담당자 선택, 설정을 모두 지웁니다.', '지우기').then(function (ok) {
+            if (!ok) return; Store.clear(); state = emptyState(); pending = null; skipRecord = true; save(); location.hash = '#/home'; render(); toast('모두 지웠습니다.');
           });
         } }))));
+    return out;
+  }
+
+  // ── 대시보드 · 분석 기록 (2026-09-30 디자인 시안) ────────────────
+  // 수치는 모두 지금 도면의 판별 결과(DrawLogic.classifyMarks)와 이 브라우저에 쌓인 분석 기록에서 계산합니다
+  var V = function () { return window.BomViews; };
+  var NS = 'http://www.w3.org/2000/svg';
+  function svgIcon(d, cls) {
+    var svg = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+    svg.setAttribute('class', 'ic' + (cls ? ' ' + cls : ''));
+    p.setAttribute('d', d); svg.appendChild(p);
+    return svg;
+  }
+  var IC_OK = 'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM7.8 12.2l2.8 2.8 5.6-5.8';
+  var IC_WARN = 'M12 3.5 21.5 20h-19zM12 10v4.6M12 17.2v.3';
+  var IC_SHEET = 'M5 3h10l4 4v14H5zM15 3v4h4M8 11h8M8 14.5h8M8 18h8M11.5 11v7';
+  function matchBadge(x) {
+    if (x.match) return h('span', { class: 'st-badge st-ok' }, svgIcon(IC_OK), '일치');
+    return h('span', { class: 'st-badge st-warn' }, svgIcon(IC_WARN), '불일치 (−' + x.diff + ')');
+  }
+  function breakdown(x) {
+    var parts = [];
+    [['customer', '고객사 품번·매핑 없음'], ['mapping', '확인 필요'], ['new', '신규'], ['empty', '품번 미입력']].forEach(function (k) {
+      var n = k[0] === 'customer' ? x.custUnmapped : x.count[k[0]];
+      if (n > 0) parts.push(k[1] + ' ' + n);
+    });
+    // 항목 단위로 줄바꿈(구분점은 뒤 항목과 붙여 둠)
+    return parts.map(function (t, i) { return h('span', { text: (i ? '· ' : '') + t }); }).reduce(function (a, el, i) { if (i) a.push(' '); a.push(el); return a; }, []);
+  }
+  function fmtAt(s) { return String(s || '').replace('T', ' ').slice(0, 16); }
+  function nowText() {
+    var d = new Date(), p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function recordHistory() {
+    if (!V() || !V().historyEntry) return;
+    var e = V().historyEntry(viewCtx);
+    if (!e) return;
+    var r = DL.upsertHistory(state.history, e, nowText(), 30);
+    if (r.changed) state.history = r.list;
+  }
+  function renderHome() {
+    var out = [h('h1', { class: 'sr-only', text: '대시보드' })];
+    var d = state.drawing;
+    if (!state.masters.map) out.push(h('div', { class: 'notice warn' }, '통합 자재 마스터가 아직 없어 모든 품번이 「신규」로 보입니다. ', h('a', { href: '#/masters', text: '마스터 데이터' }), '에서 먼저 불러오거나 아래 예시 도면을 눌러 보세요.'));
+    var res = V().dashResult(viewCtx);
+    // 1. 도면 업로드 & 뷰어
+    var c1 = h('section', { class: 'card dash-card dash-c1', 'aria-labelledby': 'dash-h1' },
+      h('h2', { id: 'dash-h1', text: '1. 도면 업로드 & 뷰어' }),
+      V().dashUpload(viewCtx),
+      V().dashViewer(viewCtx));
+    // 2. 분석 결과 요약 — 자재 종류별
+    var c2 = h('section', { class: 'card dash-card dash-c2', 'aria-labelledby': 'dash-h2' }, h('h2', { id: 'dash-h2', text: '2. 분석 결과 요약' }));
+    if (!res.total) {
+      c2.appendChild(h('p', { class: 'muted small', text: d.fileName ? '이 도면에는 아직 표시가 없습니다. 「도면 자재 판별」에서 위치를 표시해 주세요.' : '도면을 올리면 자재 종류별로 도면에 적힌 곳과 사내 자재 코드로 맞춘 곳을 비교해 여기에 보여 드립니다.' }));
+    } else {
+      var sum = DL.kindSummary(res.rows);
+      c2.appendChild(h('div', { class: 'table-wrap dash-table' }, h('table', null,
+        h('caption', { class: 'sr-only', text: '자재 종류별 도면 표기 수와 사내 자재 코드 매핑 수' }),
+        h('thead', null, h('tr', null, h('th', { scope: 'col', text: '자재 구분' }), h('th', { scope: 'col', class: 'num', text: '도면 표기' }), h('th', { scope: 'col', class: 'num', text: '사내 코드 매핑' }), h('th', { scope: 'col', text: '상태' }))),
+        h('tbody', null, sum.map(function (x) {
+          var bd = x.match ? null : breakdown(x);
+          return h('tr', null, h('th', { scope: 'row', class: 'dash-kind', text: x.kind }), h('td', { class: 'num', text: String(x.total) }), h('td', { class: 'num', text: String(x.mapped) }),
+            h('td', null, matchBadge(x), bd && bd.length ? h('div', { class: 'small muted dash-bd' }, bd) : null));
+        })),
+        h('tfoot', null, h('tr', null, h('th', { scope: 'row', text: '합계' }), h('td', { class: 'num', text: String(res.total) }),
+          h('td', { class: 'num', text: String(sum.reduce(function (a, x) { return a + x.mapped; }, 0)) }),
+          h('td', { class: 'small', text: '손볼 곳 ' + res.open + '곳' }))))));
+      c2.appendChild(h('p', { class: 'small muted dash-note' }, '도면 표기 = 도면에서 찾은 곳, 사내 코드 매핑 = 그중 사내 자재 코드가 정해진 곳(기존 자재 · 매핑된 고객사 품번). 처리는 ', h('a', { href: '#/drawing', text: '도면 자재 판별' }), '에서 합니다.'));
+    }
+    c2.appendChild(h('button', { type: 'button', class: 'btn btn-export', disabled: !res.total, onclick: function () { V().dashExport(viewCtx); } }, svgIcon(IC_SHEET, 'ic-sheet'), '자재 판별 결과 엑셀로 내보내기'));
+    // 내 최근 분석 이력
+    var hist = state.history || [];
+    var c3 = h('section', { class: 'card dash-card dash-c3', 'aria-labelledby': 'dash-h3' },
+      h('div', { class: 'dash-c3-head' }, h('h2', { id: 'dash-h3', text: '내 최근 분석 이력' }), hist.length ? h('a', { href: '#/history', class: 'small', text: '전체 보기(' + hist.length + '건)' }) : null));
+    if (!hist.length) c3.appendChild(h('p', { class: 'muted small', text: '도면을 분석하면 이 브라우저에 기록이 쌓입니다.' }));
+    else c3.appendChild(h('ul', { class: 'dash-hist' }, hist.slice(0, 5).map(function (e) {
+      var cur = d.fileName && DL.historyKey(e) === DL.historyKey({ fileName: d.fileName, drawingNo: d.info.drawingNo });
+      return h('li', null,
+        h('div', { class: 'dash-hist-top' }, h('b', { class: 'dash-hist-name', text: e.drawingNo || e.fileName }),
+          cur ? badge('지금 열린 도면', 'info') : null, e.sample ? badge('예시', 'warn') : null),
+        h('div', { class: 'small muted', text: fmtAt(e.at) + (e.customer ? ' · ' + e.customer : '') + ' · 표시 ' + e.total + '곳 · 손볼 곳 ' + e.open + '곳' }));
+    })));
+    out.push(h('div', { class: 'dash-grid' }, c1, h('div', { class: 'dash-side' }, c2, c3)));
+    return out;
+  }
+  function renderHistory() {
+    var out = [];
+    var hist = state.history || [];
+    out.push(h('div', { class: 'page-head' }, h('h1', { text: '분석 기록' }),
+      hist.length ? h('button', { type: 'button', class: 'btn btn-danger btn-small', text: '기록 모두 지우기', onclick: function () {
+        confirmBox('분석 기록 지우기', '이 브라우저에 쌓인 분석 기록 ' + hist.length + '건을 지웁니다. 지금 열린 도면과 표시는 그대로입니다.', '지우기').then(function (ok) {
+          if (!ok) return; state.history = []; skipRecord = true; save(); render(); toast('분석 기록을 지웠습니다.');
+        });
+      } }) : null));
+    out.push(h('p', { class: 'lead', text: '도면을 올려 판별한 결과를 도면마다 한 줄로 남깁니다(같은 도면은 판별이 바뀔 때마다 고쳐 적음). 이 브라우저에만 저장되며, 도면 파일은 저장하지 않으므로 이어서 보려면 같은 파일을 다시 올려 주세요.' }));
+    if (!hist.length) { out.push(h('div', { class: 'notice info' }, '아직 기록이 없습니다. ', h('a', { href: '#/home', text: '대시보드' }), '에서 도면을 올려 보세요.')); return out; }
+    var ST = DL.STATUS_ORDER;
+    out.push(h('div', { class: 'table-wrap hist-table' }, h('table', null,
+      h('thead', null, h('tr', null, h('th', { text: '분석 시각' }), h('th', { class: 'hist-doc', text: '도면' }), h('th', { text: '고객사 · 규칙' }), h('th', { class: 'num', text: '표시' }),
+        ST.map(function (s) { return h('th', { class: 'num' }, V().statusShape(viewCtx, s), DL.STATUS[s].long); }),
+        h('th', { class: 'num', text: '손볼 곳' }), h('th', null, h('span', { class: 'sr-only', text: '지우기' })))),
+      h('tbody', null, hist.map(function (e, i) {
+        return h('tr', null, h('td', { class: 'num', text: fmtAt(e.at) }),
+          h('td', { class: 'hist-doc' }, h('b', { text: e.drawingNo || '(도면 번호 없음)' }), h('div', { class: 'small muted', text: e.fileName + ' · ' + (e.type === 'pdf' ? 'PDF ' + e.pages + '쪽' : '이미지') }), e.sample ? badge('예시', 'warn') : null),
+          h('td', { text: [e.customer, e.profile && e.profile !== e.customer ? '규칙 ' + e.profile : ''].filter(Boolean).join(' · ') || '-' }),
+          h('td', { class: 'num', text: String(e.total) }),
+          ST.map(function (s) { return h('td', { class: 'num', text: String((e.count || {})[s] || 0) }); }),
+          h('td', { class: 'num', text: String(e.open) }),
+          h('td', null, h('button', { type: 'button', class: 'btn btn-small', 'aria-label': (e.drawingNo || e.fileName) + ' 기록 지우기', text: '지우기', onclick: function () {
+            state.history = hist.filter(function (_, k) { return k !== i; }); skipRecord = true; save(); render();
+          } })));
+      })))));
     return out;
   }
 
@@ -576,10 +693,11 @@
     emptyDrawing: emptyDrawing, state: function () { return state; }, save: save, render: function () { render(); }
   };
   function renderDrawing() { return window.BomViews.drawing(viewCtx); }
-  var ROUTES = { masters: renderMasters, drawing: renderDrawing, parts: renderParts, check: renderCheck, bom: renderBom, settings: renderSettings };
+  var ROUTES = { home: renderHome, history: renderHistory, masters: renderMasters, drawing: renderDrawing, parts: renderParts, check: renderCheck, bom: renderBom, settings: renderSettings };
   function render() {
-    var name = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'masters';
-    if (!ROUTES[name]) name = 'masters';
+    var name = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'home';
+    if (!ROUTES[name]) name = 'home';
+    setMenu(false);
     var y = window.scrollY;
     var prev = main.getAttribute('data-route');
     main.innerHTML = '';
@@ -591,7 +709,17 @@
     if (prev === '#/' + name) window.scrollTo(0, y); else window.scrollTo(0, 0);
   }
   window.addEventListener('hashchange', render);
-  if (!location.hash) history.replaceState(null, '', '#/masters');
+  // 좁은 화면: 왼쪽 메뉴를 햄버거 단추로 엽니다(data09-17 과 같은 방식)
+  function setMenu(open) {
+    var btn = document.getElementById('menuBtn');
+    document.body.classList.toggle('menu-open', open);
+    document.getElementById('sideBackdrop').hidden = !open;
+    if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); btn.setAttribute('aria-label', open ? '메뉴 닫기' : '메뉴 열기'); }
+  }
+  document.getElementById('menuBtn').addEventListener('click', function () { setMenu(!document.body.classList.contains('menu-open')); });
+  document.getElementById('sideBackdrop').addEventListener('click', function () { setMenu(false); document.getElementById('menuBtn').focus(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && document.body.classList.contains('menu-open')) { setMenu(false); document.getElementById('menuBtn').focus(); } });
+  if (!location.hash) history.replaceState(null, '', '#/home');
   save();
   render();
 })();

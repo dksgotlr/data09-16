@@ -553,6 +553,40 @@
     }).filter(Boolean);
   }
 
+  // 대시보드 「AI 분석 결과 요약」 — 자재 종류별로 도면 표기 수와 사내 자재 코드로 맞춘 수를 나란히 셉니다.
+  // 이 도구는 두 도면을 비교하지 않고 도면 한 장을 통합 자재 마스터와 대조하므로, 시안의 A/B 두 칸을
+  // 「도면 표기」(A)와 「사내 코드 매핑」(B)으로 옮겼습니다. 차이(diff) = 표기 − 매핑 = 사내 코드가 아직 없는 곳 수
+  function kindSummary(rows) {
+    var list = [], g = {};
+    (rows || []).forEach(function (r) {
+      var k = str(r.kind) || '종류 미정';
+      if (!g[k]) { g[k] = { kind: k, total: 0, mapped: 0, count: { existing: 0, customer: 0, mapping: 0, 'new': 0, empty: 0 }, open: 0, custUnmapped: 0 }; list.push(g[k]); }
+      var x = g[k];
+      x.total++;
+      x.count[r.status] = (x.count[r.status] || 0) + 1;
+      if (r.code && (r.status === 'existing' || r.status === 'customer')) x.mapped++;
+      if (r.status === 'customer' && !r.code) x.custUnmapped++;
+      if (isOpen(r)) x.open++;
+    });
+    list.forEach(function (x) { x.diff = x.total - x.mapped; x.match = x.diff === 0; });
+    return list;
+  }
+  // 분석 기록 — 같은 도면(파일 이름 + 도면 번호)은 한 줄로 두고, 판별 결과가 바뀌었을 때만 맨 위로 올려 시각을 고칩니다.
+  // 결과: { list, changed }. list 는 새 배열(changed 가 false 면 받은 것 그대로)
+  function historyKey(e) { return str(e.fileName) + '\u0001' + str(e.drawingNo); }
+  function historySig(e) { return JSON.stringify([e.total, e.open, e.count, str(e.customer), str(e.profile), !!e.sample]); }
+  function upsertHistory(list, entry, now, max) {
+    list = Array.isArray(list) ? list : [];
+    max = max || 30;
+    var key = historyKey(entry), i = -1;
+    for (var j = 0; j < list.length; j++) if (historyKey(list[j]) === key) { i = j; break; }
+    if (i >= 0 && historySig(list[i]) === historySig(entry)) return { list: list, changed: false };
+    var e = Object.assign({}, entry, { at: now, id: i >= 0 ? list[i].id : 'h' + String(now).replace(/\D/g, '') + '-' + list.length });
+    var out = list.filter(function (_, k) { return k !== i; });
+    out.unshift(e);
+    return { list: out.slice(0, max), changed: true };
+  }
+
   var api = {
     DEFAULT_DRAW_SETTINGS: DEFAULT_DRAW_SETTINGS, mergeDrawSettings: mergeDrawSettings,
     STATUS: STATUS, STATUS_ORDER: STATUS_ORDER, REASON: REASON,
@@ -562,7 +596,8 @@
     candidateCheck: candidateCheck, extractCandidates: extractCandidates, sortMarks: sortMarks,
     similarCandidates: similarCandidates, guessKind: guessKind, classifyPart: classifyPart, choiceKey: choiceKey,
     classifyMarks: classifyMarks, groupByPart: groupByPart, drawingSheets: drawingSheets, statusText: statusText,
-    defaultBox: defaultBox, parsePnList: parsePnList
+    defaultBox: defaultBox, parsePnList: parsePnList,
+    kindSummary: kindSummary, upsertHistory: upsertHistory, historyKey: historyKey
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DrawLogic = api;

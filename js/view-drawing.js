@@ -297,6 +297,8 @@
     if (ui.fit) ui.zoom = Math.max(0.05, (box.clientWidth - 2) / pg.w);
     var z = ui.zoom;
     stage.style.width = pg.w * z + 'px'; stage.style.height = pg.h * z + 'px';
+    // 대시보드 뷰어: 도면이 틀보다 낮으면 빈 회색 칸이 남지 않게 틀 높이를 도면에 맞춤
+    if (ui.dash) { box.style.height = ''; var maxH = box.clientHeight; if (pg.h * z + 2 < maxH) box.style.height = Math.ceil(pg.h * z + 2) + 'px'; }
     var zl = document.getElementById('dv-zoom'); if (zl) zl.textContent = Math.round(z * 100) + '%';
     drawMarks(stage, z);
     var holder = stage.querySelector('.dv-holder');
@@ -310,6 +312,8 @@
     else { box.scrollLeft = ui.scroll.x; box.scrollTop = ui.scroll.y; }
   }
   var lastRows = [];
+  // 대시보드의 작은 뷰어는 늘 「선택」으로 봅니다(표시 추가·규칙 가르치기는 「도면 자재 판별」 화면에서)
+  function curMode() { return ui.dash ? 'select' : ui.mode; }
   function tagLabel(r) { return r.no + ' ' + (r.status === 'customer' && !r.code ? '고객사·매핑 없음' : DL.STATUS[r.status].label); }
   function drawMarks(stage, z) {
     var layer = stage.querySelector('.dv-marks');
@@ -323,14 +327,14 @@
       tb.appendChild(h0('span', 'tbl-tag', '도면 부품표'));
       layer.appendChild(tb);
     }
-    if (ui.mode === 'learn') { drawTokens(layer, z); return; }
+    if (curMode() === 'learn') { drawTokens(layer, z); return; }
     lastRows.forEach(function (r) {
       if (r.page !== ui.page) return;
       var el = document.createElement('div');
       el.className = 'mk st-' + r.status + (r.status === 'customer' && !r.code ? ' unmapped' : '') + (r.id === ui.sel ? ' sel' : '') + (ui.filter !== 'all' && ui.filter !== r.status ? ' dim' : '');
       el.setAttribute('data-id', r.id);
       el.setAttribute('role', 'button');
-      el.setAttribute('tabindex', ui.mode === 'select' ? '0' : '-1');
+      el.setAttribute('tabindex', curMode() === 'select' ? '0' : '-1');
       el.setAttribute('aria-label', r.no + '번 ' + (r.pn || '품번 없음') + ' ' + DL.STATUS[r.status].long);
       el.title = r.no + '. ' + (r.pn || '(품번 없음)') + ' — ' + DL.statusText(r) + (r.code ? ' · ' + r.code : '');
       var pad = 2;
@@ -339,7 +343,7 @@
       var tag = document.createElement('span');
       tag.className = 'mk-tag'; tag.textContent = tagLabel(r);
       el.appendChild(tag);
-      el.addEventListener('click', function (e) { if (ui.mode !== 'select') return; e.stopPropagation(); selectFromDrawing(r.id); });
+      el.addEventListener('click', function (e) { if (curMode() !== 'select') return; e.stopPropagation(); selectFromDrawing(r.id); });
       el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectFromDrawing(r.id); } });
       layer.appendChild(el);
     });
@@ -478,6 +482,7 @@
   // 도면 → 표
   function selectFromDrawing(id) {
     ui.sel = id;
+    if (ui.dash) { ui.pendingScroll = id; ui.filter = 'all'; root.location.hash = '#/drawing'; return; }
     if (ui.filter !== 'all') {
       var r = lastRows.filter(function (x) { return x.id === id; })[0];
       if (r && r.status !== ui.filter) { ui.filter = 'all'; saveScroll(); ctx.render(); }
@@ -499,7 +504,7 @@
       return { x: (e.clientX - r.left) / ui.zoom, y: (e.clientY - r.top) / ui.zoom, px: e.clientX, py: e.clientY };
     }
     stage.addEventListener('pointerdown', function (e) {
-      if ((ui.mode !== 'mark' && ui.mode !== 'table') || e.button > 0) return;
+      if ((curMode() !== 'mark' && curMode() !== 'table') || e.button > 0) return;
       e.preventDefault();
       start = pt(e);
       try { stage.setPointerCapture(e.pointerId); } catch (x) { /* 무시 */ }
@@ -781,11 +786,8 @@
   function render(c) {
     ctx = c;
     var h = ctx.h, st = S(), d = D();
-    // 새로고침 뒤: 예시는 저장된 표시를 유지한 채 도면만 다시 그림
-    if (d.sample && !ui.doc && !ui.img && !ui.loading && !ui.autoTried && root.DrawSamplePdf) {
-      ui.autoTried = true;
-      setTimeout(function () { loadSample(d.sample === true ? 'pdf' : d.sample, true); }, 0);
-    }
+    if (ui.dash) { ui.dash = false; ui.fit = true; if (!ui.pendingScroll) ui.scroll = { x: 0, y: 0 }; }
+    reloadSample();
     var res = classify();
     lastRows = res.rows;
     var out = [];
@@ -829,6 +831,14 @@
     out.push(rulesCard());
     setTimeout(paint, 0);
     return out;
+  }
+  // 새로고침 뒤: 예시는 저장된 표시를 유지한 채 도면만 다시 그림
+  function reloadSample() {
+    var d = D();
+    if (d.sample && !ui.doc && !ui.img && !ui.loading && !ui.autoTried && root.DrawSamplePdf) {
+      ui.autoTried = true;
+      setTimeout(function () { loadSample(d.sample === true ? 'pdf' : d.sample, true); }, 0);
+    }
   }
   function fileCard() {
     var h = ctx.h, d = D(), st = S();
@@ -1265,6 +1275,107 @@
       h('p', { class: 'small muted', style: 'margin-top:8px', text: '최소 글자 수·영문숫자·전선 규격·제외 목록을 바꾸면 「PDF 글자에서 다시 찾기」를 눌러야 반영됩니다. 비슷한 품번·헷갈리는 글자 설정은 바로 반영됩니다.' }));
   }
 
+  // ── 대시보드(2026-09-30 디자인 시안) — 도면 올리기 · 작은 뷰어 · 판별 요약 · 분석 기록 ──
+  // 도면 읽기·판별·내보내기는 위 함수를 그대로 씁니다. 대시보드 뷰어는 「선택」만(표시를 누르면 판별 화면의 그 행으로)
+  var ICON = {
+    upload: 'M7 18.5h-.5A4.5 4.5 0 0 1 6 9.55 6 6 0 0 1 17.6 8.1 4.2 4.2 0 0 1 17.5 18.5H17M12 12v8M8.8 15.2 12 12l3.2 3.2',
+    file: 'M6 3h8l4 4v14H6zM14 3v4h4',
+    zoomIn: 'M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.5 15.5l4.5 4.5M10.5 7.8v5.4M7.8 10.5h5.4',
+    zoomOut: 'M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.5 15.5l4.5 4.5M7.8 10.5h5.4',
+    fit: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
+    open: 'M14 4h6v6M20 4l-8 8M18 14v6H4V6h6'
+  };
+  function icon(name, cls) {
+    var NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+    svg.setAttribute('class', 'ic' + (cls ? ' ' + cls : ''));
+    p.setAttribute('d', ICON[name]); svg.appendChild(p);
+    return svg;
+  }
+  function dashEnter(c) { ctx = c; if (!ui.dash) { ui.dash = true; ui.fit = true; ui.scroll = { x: 0, y: 0 }; } reloadSample(); }
+  function dashUpload(c) {
+    dashEnter(c);
+    var h = ctx.h;
+    var input = h('input', { type: 'file', class: 'sr-only', accept: '.pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,application/pdf,image/*', 'aria-label': '도면 파일 선택(PDF·이미지)', onchange: function (e) { onFile(e.target.files[0]); e.target.value = ''; } });
+    var zone = h('label', { class: 'dash-drop' },
+      h('span', { class: 'dash-drop-ic' }, icon('upload'), icon('file')),
+      h('span', { class: 'dash-drop-text', text: '여기에 도면 PDF·이미지 파일을 끌어다 놓거나 클릭하여 업로드하세요.' }),
+      h('span', { class: 'dash-drop-hint small', text: '글자가 살아 있는 PDF 는 품번을 자동으로 찾습니다 · 파일은 이 브라우저 안에서만 읽습니다' }),
+      input);
+    ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('over'); }); });
+    ['dragleave', 'dragend'].forEach(function (t) { zone.addEventListener(t, function () { zone.classList.remove('over'); }); });
+    zone.addEventListener('drop', function (e) {
+      e.preventDefault(); zone.classList.remove('over');
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) onFile(f);
+    });
+    return zone;
+  }
+  function dashViewer(c) {
+    dashEnter(c);
+    var h = ctx.h, d = D();
+    lastRows = classify().rows;
+    if (!d.fileName) {
+      return h('div', { class: 'dash-empty' },
+        h('p', { class: 'small muted', text: ui.loading || '아직 올린 도면이 없습니다. 예시 도면(가상 자료)으로 먼저 보실 수 있습니다.' }),
+        h('div', { class: 'actions', style: 'margin-top:0' },
+          h('button', { type: 'button', class: 'btn btn-small', onclick: function () { askSample('pdf'); }, text: '예시 A: 라벨형 PDF' }),
+          h('button', { type: 'button', class: 'btn btn-small', onclick: function () { askSample('table'); }, text: '예시 B: 부품표형 PDF' })));
+    }
+    var n = d.pages.length || 1;
+    function tool(name, label, fn, extra) {
+      return h('button', Object.assign({ type: 'button', class: 'dash-tool', 'aria-label': label, title: label, onclick: fn }, extra || {}), icon(name));
+    }
+    var tools = h('div', { class: 'dash-tools', role: 'group', 'aria-label': '도면 보기 도구' },
+      tool('zoomIn', '확대', function () { zoomBy(1.25); }),
+      tool('zoomOut', '축소', function () { zoomBy(1 / 1.25); }),
+      tool('fit', '폭 맞춤', function () { ui.fit = true; ui.scroll = { x: 0, y: 0 }; ctx.render(); }),
+      tool('open', '도면 자재 판별 화면에서 크게 보기', function () { root.location.hash = '#/drawing'; }));
+    var stage = h('div', { id: 'dv-stage', class: 'dv-stage' },
+      h('div', { class: 'dv-holder' }, (ui.doc || ui.img) ? h('span', { class: 'small muted dv-wait', text: '도면을 그리는 중…' }) : h('span', { class: 'small muted dv-wait', text: ui.loading || '도면 파일은 저장하지 않습니다. 같은 파일을 위에 다시 올리면 그림이 나옵니다. 표시 위치는 저장돼 있습니다.' })),
+      h('div', { class: 'dv-marks' }));
+    var viewer = h('div', { id: 'dv-viewer', class: 'dv-viewer dash-viewer', tabindex: '0', 'aria-label': '도면 미리보기 — 끌거나 스크롤해 움직입니다' }, stage);
+    viewer.addEventListener('scroll', function () { ui.scroll = { x: viewer.scrollLeft, y: viewer.scrollTop }; });
+    // 마우스로 끌어 움직이기(터치는 브라우저 기본 스크롤)
+    var drag = null;
+    viewer.addEventListener('pointerdown', function (e) {
+      if (e.pointerType !== 'mouse' || e.button > 0 || (e.target.closest && e.target.closest('.mk'))) return;
+      drag = { x: e.clientX, y: e.clientY, l: viewer.scrollLeft, t: viewer.scrollTop };
+      viewer.classList.add('panning');
+      try { viewer.setPointerCapture(e.pointerId); } catch (x) { /* 무시 */ }
+    });
+    viewer.addEventListener('pointermove', function (e) { if (!drag) return; viewer.scrollLeft = drag.l - (e.clientX - drag.x); viewer.scrollTop = drag.t - (e.clientY - drag.y); });
+    function stop() { drag = null; viewer.classList.remove('panning'); }
+    viewer.addEventListener('pointerup', stop); viewer.addEventListener('pointercancel', stop);
+    var wrap = h('div', { class: 'dash-view' }, tools,
+      h('div', { class: 'dash-view-main' }, viewer, h('span', { class: 'dash-file', title: d.fileName, text: d.fileName })));
+    var foot = h('div', { class: 'dash-view-foot small' },
+      n > 1 ? h('span', { class: 'dv-group' },
+        h('button', { type: 'button', class: 'btn btn-small', disabled: ui.page <= 1, text: '이전 쪽', onclick: function () { ui.page--; ui.scroll = { x: 0, y: 0 }; ctx.render(); } }),
+        h('span', { text: ui.page + ' / ' + n + '쪽' }),
+        h('button', { type: 'button', class: 'btn btn-small', disabled: ui.page >= n, text: '다음 쪽', onclick: function () { ui.page++; ui.scroll = { x: 0, y: 0 }; ctx.render(); } })) : null,
+      h('span', { id: 'dv-zoom', class: 'muted', text: Math.round(ui.zoom * 100) + '%' }),
+      h('span', { class: 'muted', text: '표시를 누르면 판별 표의 그 행으로 갑니다' }));
+    setTimeout(paint, 0);
+    return [wrap, foot, h('div', { class: 'dv-legend small' }, DL.STATUS_ORDER.map(function (s) { return h('span', null, statusShape(s), DL.STATUS[s].long); }))];
+  }
+  function dashResult(c) { dashEnter(c); return classify(); }
+  function historyEntry(c) {
+    if (!ctx) ctx = c;
+    var d = D();
+    if (!d.fileName || !d.marks.length) return null;
+    var res = classify(), p = activeProfile();
+    return { fileName: d.fileName, drawingNo: d.info.drawingNo || '', customer: d.info.customer || '', profile: p ? p.name : '', sample: !!d.sample,
+      type: d.type, pages: d.pages.length, total: res.total, open: res.open, count: res.count };
+  }
+  function dashExport(c) { if (!ctx) ctx = c; exportXlsx(); }
+
   root.BomViews = root.BomViews || {};
   root.BomViews.drawing = render;
+  root.BomViews.dashUpload = dashUpload;
+  root.BomViews.dashViewer = dashViewer;
+  root.BomViews.dashResult = dashResult;
+  root.BomViews.historyEntry = historyEntry;
+  root.BomViews.dashExport = dashExport;
+  root.BomViews.statusShape = function (c, st) { if (!ctx) ctx = c; return statusShape(st); };
 })(window);
